@@ -85,6 +85,10 @@ async function handleComment(value) {
     console.log('handleComment skipped: missing id or from.id');
     return;
   }
+  if (value.from.id === process.env.IG_USER_ID) {
+    console.log('handleComment skipped: comment authored by our own account');
+    return;
+  }
   const stateKey = `ig:${value.from.id}`;
   const existing = await kvGetJSON(stateKey);
   if (existing) return; // already engaged with this user, avoid re-greeting on every comment
