@@ -31,9 +31,11 @@ async function sendToInstagram(body) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+  const resText = await r.text();
   if (!r.ok) {
-    const errText = await r.text();
-    console.error('Instagram send error:', errText);
+    console.error('Instagram send error:', r.status, resText);
+  } else {
+    console.log('Instagram send ok:', resText);
   }
   return r;
 }
@@ -42,8 +44,34 @@ function sendPrivateReply(commentId, text) {
   return sendToInstagram({ recipient: { comment_id: commentId }, message: { text } });
 }
 
+function sendPrivateReplyAudio(commentId, audioUrl) {
+  return sendToInstagram({
+    recipient: { comment_id: commentId },
+    message: { attachment: { type: 'audio', payload: { url: audioUrl, is_reusable: true } } },
+  });
+}
+
 function sendDirectMessage(recipientId, text) {
   return sendToInstagram({ recipient: { id: recipientId }, message: { text } });
+}
+
+async function sendPublicCommentReply(commentId, text) {
+  const token = process.env.IG_ACCESS_TOKEN;
+  const r = await fetch(
+    `https://graph.instagram.com/v21.0/${commentId}/replies?access_token=${encodeURIComponent(token)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text }),
+    }
+  );
+  const resText = await r.text();
+  if (!r.ok) {
+    console.error('Instagram comment reply error:', r.status, resText);
+  } else {
+    console.log('Instagram comment reply ok:', resText);
+  }
+  return r;
 }
 
 function normalizePhone(raw) {
@@ -52,16 +80,24 @@ function normalizePhone(raw) {
 }
 
 async function handleComment(value) {
-  if (!value?.id || !value?.from?.id) return;
+  console.log('handleComment received:', JSON.stringify(value));
+  if (!value?.id || !value?.from?.id) {
+    console.log('handleComment skipped: missing id or from.id');
+    return;
+  }
   const stateKey = `ig:${value.from.id}`;
   const existing = await kvGetJSON(stateKey);
   if (existing) return; // already engaged with this user, avoid re-greeting on every comment
 
   await kvSetJSON(stateKey, { history: [], commentText: value.text || '', mediaId: value.media?.id || null });
 
-  const opener =
-    "Salom! 👋 Videodagi mahsulot haqida savollaringiz bo'lsa shu yerga yozing — narxi va tafsilotlarini albatta aytib beraman 😊";
+  await sendPublicCommentReply(value.id, "Assalomu alaykum. Sizga direct'dan javob yubordim! 😊");
+
+  const opener = "Assalomu alaykum. PIKNIC_UZ do'koniga xush kelibsiz! 😊";
   await sendPrivateReply(value.id, opener);
+
+  const audioUrl = process.env.WELCOME_AUDIO_URL;
+  if (audioUrl) await sendPrivateReplyAudio(value.id, audioUrl);
 }
 
 async function handleMessagingEvent(event) {
@@ -135,10 +171,13 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Invalid JSON' });
   }
 
+  console.log('Webhook body:', JSON.stringify(body));
+
   if (body.object === 'instagram') {
     try {
       for (const entry of body.entry || []) {
         for (const change of entry.changes || []) {
+          console.log('Change field:', change.field);
           if (change.field === 'comments') await handleComment(change.value);
         }
         for (const event of entry.messaging || []) {
