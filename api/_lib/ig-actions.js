@@ -21,6 +21,13 @@ export function sendPrivateReplyAudio(commentId, audioUrl) {
   });
 }
 
+export function sendDirectAudio(recipientId, audioUrl) {
+  return sendToInstagram({
+    recipient: { id: recipientId },
+    message: { attachment: { type: 'audio', payload: { url: audioUrl, is_reusable: true } } },
+  });
+}
+
 export async function sendPublicCommentReply(commentId, text) {
   const token = process.env.IG_ACCESS_TOKEN;
   const r = await fetch(
@@ -65,4 +72,24 @@ export async function handleNewComment(value) {
   if (audioUrl) await sendPrivateReplyAudio(value.id, audioUrl);
 
   return { replied: true, username };
+}
+
+// Called when someone messages us directly (e.g. via Message Requests) without
+// ever having commented first. Sends the same welcome audio, once per user.
+export async function handleFirstDirectContact(senderId) {
+  const stateKey = `ig:${senderId}`;
+  const existing = await kvGetJSON(stateKey);
+  if (existing) return { skipped: 'already contacted' };
+
+  const day = todayKey();
+  await kvSAdd('stats:days', day);
+  const repliedAt = Date.now();
+  await kvSetJSON(stateKey, { repliedAt, username: null });
+  await kvHSet('stats:replied', senderId, { username: null, commentText: '(Direct orqali)', repliedAt });
+  await kvHIncrBy(`stats:day:${day}`, 'replied');
+
+  const audioUrl = process.env.WELCOME_AUDIO_URL;
+  if (audioUrl) await sendDirectAudio(senderId, audioUrl);
+
+  return { replied: true };
 }
