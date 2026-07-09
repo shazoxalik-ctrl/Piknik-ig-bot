@@ -1,7 +1,14 @@
 import { kvHGetAll, kvHSet, kvHDel, kvGetJSON, kvSetJSONPersistent, kvSetRaw, kvSMembers } from './kv.js';
 import { hashPassword, verifyPassword, signSession, verifySession, parseCookies } from './auth.js';
-import { handleNewComment, handleFirstDirectContact } from './ig-actions.js';
-import { listRecentMedia, listMediaComments, listConversations, getConversationMessages } from './ig-graph.js';
+import { handleNewComment, handleFirstDirectContact, sendPublicCommentReply } from './ig-actions.js';
+import {
+  listRecentMedia,
+  listMediaComments,
+  listConversations,
+  getConversationMessages,
+  listCommentReplies,
+  deleteComment,
+} from './ig-graph.js';
 
 const DEFAULT_REPLY_TEXT = "Assalomu alaykum. Sizga direct'dan javob yubordim! 😊";
 
@@ -259,6 +266,46 @@ export default async function adminHandler(req, res, path) {
     }
   }
 
+  if (req.method === 'POST' && path[0] === 'fixwrongreplies') {
+    try {
+      const body = await readJsonBody(req);
+      const badText = body.wrongText || 'Test xabar';
+      const MAX_MEDIA_PER_RUN = 3;
+      const offset = Number(body.offset) || 0;
+      const allMedia = await listRecentMedia(30);
+      const media = allMedia.slice(offset, offset + MAX_MEDIA_PER_RUN);
+      const messages = (await kvGetJSON('settings:messages')) || {};
+      const correctText = messages.commentReplyText || DEFAULT_REPLY_TEXT;
+      let scanned = 0;
+      let fixedCount = 0;
+      for (const m of media) {
+        const comments = await listMediaComments(m.id);
+        for (const c of comments) {
+          if (c.from?.id === process.env.IG_USER_ID) continue;
+          const replies = await listCommentReplies(c.id);
+          for (const rep of replies) {
+            if (rep.from?.id === process.env.IG_USER_ID && rep.text === badText) {
+              scanned++;
+              const deleted = await deleteComment(rep.id);
+              if (deleted) {
+                await sendPublicCommentReply(c.id, correctText);
+                fixedCount++;
+              }
+            }
+          }
+        }
+      }
+      const nextOffset = offset + media.length;
+      const hasMore = nextOffset < allMedia.length;
+      return res
+        .status(200)
+        .json({ ok: true, mediaChecked: media.length, scanned, fixedCount, hasMore, nextOffset, totalMedia: allMedia.length });
+    } catch (e) {
+      console.error('fixwrongreplies error', e);
+      return res.status(500).json({ error: String(e) });
+    }
+  }
+
   res.setHeader('Content-Type', 'text/html');
 
   if (path[0] === 'users') {
@@ -337,6 +384,11 @@ export default async function adminHandler(req, res, path) {
       <button id="btnComments">Kommentlarni tekshirish</button>
       <div id="resComments" style="margin-top:16px;"></div>
 
+      <h2 style="margin-top:40px;">Noto'g'ri yuborilgan javoblarni tuzatish</h2>
+      <p style="color:#999;font-size:14px">"Test xabar" matni bilan ketgan noto'g'ri kommentlarni o'chirib, to'g'ri matn bilan qayta yozadi.</p>
+      <button id="btnFix">Noto'g'ri javoblarni tuzatish</button>
+      <div id="resFix" style="margin-top:16px;"></div>
+
       <h2 style="margin-top:40px;">Javobsiz DM'larni topish</h2>
       <p style="color:#999;font-size:14px">Suhbatlarni tekshirib (shu jumladan "Message Requests" bo'limidagilar ham), oxirgi xabar mijozdan bo'lib, hali javob berilmaganlarini ro'yxat qiladi.</p>
       <button id="btnDms">DM'larni tekshirish</button>
@@ -364,6 +416,28 @@ export default async function adminHandler(req, res, path) {
             }
           } finally {
             btn.disabled = false; btn.textContent = 'Kommentlarni tekshirish';
+          }
+        };
+        document.getElementById('btnFix').onclick = async () => {
+          const btn = document.getElementById('btnFix');
+          const resEl = document.getElementById('resFix');
+          btn.disabled = true;
+          let offset = 0, totalMedia = 0, scanned = 0, fixedCount = 0, mediaDone = 0;
+          try {
+            while (true) {
+              btn.textContent = 'Tuzatilmoqda... (' + mediaDone + (totalMedia ? '/' + totalMedia : '') + ' post)';
+              const r = await postJSON('/api/admin/fixwrongreplies', { offset, wrongText: 'Test xabar' });
+              if (!r.ok) {
+                resEl.innerHTML = '<p style="color:#ff6b6b">Xatolik: ' + (r.error || 'nomalum') + '</p>';
+                break;
+              }
+              totalMedia = r.totalMedia; scanned += r.scanned; fixedCount += r.fixedCount; mediaDone += r.mediaChecked;
+              resEl.innerHTML = '<p>' + mediaDone + '/' + totalMedia + ' ta post tekshirildi, ' + scanned + ' ta noto\\'g\\'ri javob topildi, ' + fixedCount + ' tasi tuzatildi.</p>';
+              if (!r.hasMore) break;
+              offset = r.nextOffset;
+            }
+          } finally {
+            btn.disabled = false; btn.textContent = 'Noto\\'g\\'ri javoblarni tuzatish';
           }
         };
         document.getElementById('btnDms').onclick = async () => {
