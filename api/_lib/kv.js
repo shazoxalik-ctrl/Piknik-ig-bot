@@ -38,3 +38,23 @@ export async function kvHGetAll(key) {
   }
   return out;
 }
+
+export async function kvHDel(key, field) {
+  if (!KV_URL || !KV_TOKEN) return;
+  await kvCommand(['HDEL', key, field]);
+}
+
+export async function kvSetJSONPersistent(key, value) {
+  if (!KV_URL || !KV_TOKEN) return;
+  await kvCommand(['SET', key, JSON.stringify(value)]);
+}
+
+export async function kvSetRaw(key, value) {
+  if (!KV_URL || !KV_TOKEN) return;
+  await kvCommand(['SET', key, value]);
+}
+
+export async function kvGetRaw(key) {
+  if (!KV_URL || !KV_TOKEN) return null;
+  return await kvCommand(['GET', key]);
+}
