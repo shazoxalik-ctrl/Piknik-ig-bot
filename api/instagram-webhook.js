@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { kvGetJSON, kvSetJSON } from './_lib/kv.js';
+import { kvGetJSON, kvSetJSON, kvHSet } from './_lib/kv.js';
 
 export const config = { api: { bodyParser: false } };
 
@@ -78,12 +78,41 @@ async function handleComment(value) {
   const existing = await kvGetJSON(stateKey);
   if (existing) return; // already engaged with this user, avoid re-greeting on every comment
 
-  await kvSetJSON(stateKey, { repliedAt: Date.now() });
+  const username = value.from.username || null;
+  const repliedAt = Date.now();
+  await kvSetJSON(stateKey, { repliedAt, username });
+  await kvHSet('stats:replied', value.from.id, { username, commentText: value.text || '', repliedAt });
 
   await sendPublicCommentReply(value.id, "Assalomu alaykum. Sizga direct'dan javob yubordim! 😊");
 
   const audioUrl = process.env.WELCOME_AUDIO_URL;
   if (audioUrl) await sendPrivateReplyAudio(value.id, audioUrl);
+}
+
+function extractPhone(text) {
+  if (!text) return null;
+  const match = text.match(/(\+?\d[\d\s\-()]{6,17}\d)/);
+  if (!match) return null;
+  const digits = match[0].replace(/\D/g, '');
+  return digits.length >= 7 && digits.length <= 13 ? digits : null;
+}
+
+async function handleMessagingEvent(event) {
+  const senderId = event.sender?.id;
+  const message = event.message;
+  if (!senderId || !message || message.is_echo) return;
+
+  const phone = extractPhone(message.text);
+  if (!phone) return;
+
+  const state = await kvGetJSON(`ig:${senderId}`);
+  await kvHSet('stats:leads', senderId, {
+    username: state?.username || null,
+    phone,
+    text: message.text,
+    capturedAt: Date.now(),
+  });
+  console.log('Phone captured:', senderId, phone);
 }
 
 export default async function handler(req, res) {
@@ -119,6 +148,9 @@ export default async function handler(req, res) {
         for (const change of entry.changes || []) {
           console.log('Change field:', change.field);
           if (change.field === 'comments') await handleComment(change.value);
+        }
+        for (const event of entry.messaging || []) {
+          await handleMessagingEvent(event);
         }
       }
     } catch (e) {
