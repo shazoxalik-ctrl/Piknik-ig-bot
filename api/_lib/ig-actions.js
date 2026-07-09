@@ -43,6 +43,24 @@ export function todayKey() {
   return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' });
 }
 
+const INTEREST_KEYWORDS = [
+  'narx', 'нарх', 'qancha', 'канча', 'нечи', 'nechi', 'qiymat', 'сколько', 'цена',
+  'sotasiz', 'sotilad', 'bormi', 'bor mi', 'mavjud', 'yetkaz', 'достав',
+  'buyurtma', 'заказ', 'купить', 'sotib ol', 'kerak', 'malumot', 'информация',
+  'qayerda', 'qayerdan', 'откуда',
+];
+
+// Only reply to comments that show real purchase intent (asking about price/product,
+// or leaving a "+"). Plain reactions or unrelated questions are skipped.
+export function isQualifyingComment(text) {
+  if (!text) return false;
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (trimmed.includes('+')) return true;
+  const lower = trimmed.toLowerCase();
+  return INTEREST_KEYWORDS.some((k) => lower.includes(k));
+}
+
 export async function handleNewComment(value) {
   if (!value?.id || !value?.from?.id) return { skipped: 'missing id' };
   if (value.from.id === process.env.IG_USER_ID) return { skipped: 'own account' };
@@ -53,7 +71,11 @@ export async function handleNewComment(value) {
 
   const username = value.from.username || null;
 
-  // Every new comment gets a public reply, even if this user has commented before.
+  if (!isQualifyingComment(value.text)) {
+    return { skipped: 'not a qualifying comment', username };
+  }
+
+  // Qualifying comments get a public reply (posted as a threaded reply to the comment).
   const messages = (await kvGetJSON('settings:messages')) || {};
   const replyText = messages.commentReplyText || "Assalomu alaykum. Sizga direct'dan javob yubordim! 😊";
   await sendPublicCommentReply(value.id, replyText);
