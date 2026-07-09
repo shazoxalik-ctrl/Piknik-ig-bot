@@ -1,4 +1,4 @@
-import { kvGetJSON, kvSetJSON, kvHSet, kvHIncrBy, kvSAdd } from './kv.js';
+import { kvGetJSON, kvSetJSON, kvSetJSONPersistent, kvHSet, kvHIncrBy, kvSAdd } from './kv.js';
 
 const GRAPH_URL = `https://graph.instagram.com/v21.0/${process.env.IG_USER_ID}/messages`;
 
@@ -74,6 +74,13 @@ export async function handleNewComment(value) {
   if (!isQualifyingComment(value.text)) {
     return { skipped: 'not a qualifying comment', username };
   }
+
+  // Guard against replying twice to the same comment (duplicate webhook delivery,
+  // a re-run backfill, etc.) — each comment ID may only ever get one reply.
+  const commentStateKey = `repliedcomment:${value.id}`;
+  const alreadyRepliedToComment = await kvGetJSON(commentStateKey);
+  if (alreadyRepliedToComment) return { skipped: 'comment already replied', username };
+  await kvSetJSONPersistent(commentStateKey, true);
 
   // Qualifying comments get a public reply (posted as a threaded reply to the comment).
   const messages = (await kvGetJSON('settings:messages')) || {};
