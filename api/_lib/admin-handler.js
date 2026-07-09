@@ -117,6 +117,7 @@ function loginPage(error) {
 }
 
 export default async function adminHandler(req, res, path) {
+  res.setHeader('Cache-Control', 'no-store');
   const cookies = parseCookies(req.headers.cookie);
   const currentUser = verifySession(cookies.admin_session);
 
