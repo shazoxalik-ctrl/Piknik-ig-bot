@@ -22,3 +22,19 @@ export async function kvSetJSON(key, value, ttlSeconds = 60 * 60 * 24 * 3) {
   if (!KV_URL || !KV_TOKEN) return;
   await kvCommand(['SET', key, JSON.stringify(value), 'EX', String(ttlSeconds)]);
 }
+
+export async function kvHSet(key, field, value) {
+  if (!KV_URL || !KV_TOKEN) return;
+  await kvCommand(['HSET', key, field, JSON.stringify(value)]);
+}
+
+export async function kvHGetAll(key) {
+  if (!KV_URL || !KV_TOKEN) return {};
+  const flat = await kvCommand(['HGETALL', key]);
+  if (!Array.isArray(flat)) return {};
+  const out = {};
+  for (let i = 0; i < flat.length; i += 2) {
+    try { out[flat[i]] = JSON.parse(flat[i + 1]); } catch { out[flat[i]] = flat[i + 1]; }
+  }
+  return out;
+}
