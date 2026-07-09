@@ -59,6 +59,10 @@ export async function deleteComment(commentId) {
   const url = `https://graph.instagram.com/v21.0/${commentId}?access_token=${encodeURIComponent(token())}`;
   const r = await fetch(url, { method: 'DELETE' });
   const data = await r.json();
-  if (!r.ok) console.error('deleteComment error', JSON.stringify(data));
-  return r.ok;
+  if (!r.ok) {
+    console.error('deleteComment error', JSON.stringify(data));
+    const rateLimited = data?.error?.code === 4;
+    return { ok: false, rateLimited };
+  }
+  return { ok: true, rateLimited: false };
 }
