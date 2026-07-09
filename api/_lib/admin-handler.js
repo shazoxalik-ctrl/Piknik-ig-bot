@@ -48,7 +48,13 @@ function layout(title, body, active) {
   header { display: flex; justify-content: space-between; align-items: center; padding: 16px 32px; border-bottom: 1px solid #262626; flex-wrap: wrap; gap: 8px; }
   nav a { color: #999; text-decoration: none; margin-right: 20px; font-size: 14px; }
   nav a.active, nav a:hover { color: #fff; }
-  main { padding: 32px; max-width: 900px; }
+  main { padding: 32px; max-width: 1000px; }
+  .filters { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+  .filters a { color: #999; text-decoration: none; font-size: 13px; padding: 6px 12px; border-radius: 6px; background: #1c1c1c; }
+  .filters a.active, .filters a:hover { color: #fff; background: #2a2a2a; }
+  .filters form { display: flex; align-items: center; gap: 8px; max-width: none; margin: 0; }
+  .filters input { width: auto; margin: 0; padding: 6px 10px; }
+  .filters button { padding: 6px 14px; font-size: 13px; }
   .cards { display: flex; gap: 16px; margin-bottom: 32px; flex-wrap: wrap; }
   .card { background: #1c1c1c; border-radius: 12px; padding: 20px 28px; }
   .card .num { font-size: 32px; font-weight: 700; }
@@ -247,7 +253,11 @@ export default async function adminHandler(req, res, path) {
     kvSMembers('stats:days'),
   ]);
 
-  const sortedDays = days.sort().reverse();
+  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' });
+  const from = req.query.from || '0000-00-00';
+  const to = req.query.to || todayStr;
+
+  const sortedDays = days.filter((d) => d >= from && d <= to).sort().reverse();
   const dayStats = await Promise.all(sortedDays.map((day) => kvHGetAll(`stats:day:${day}`)));
 
   let totalComments = 0, totalReplied = 0, totalLeads = 0;
@@ -291,7 +301,25 @@ export default async function adminHandler(req, res, path) {
     )
     .join('');
 
+  function isoDaysAgo(n) {
+    const d = new Date();
+    d.setDate(d.getDate() - n);
+    return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' });
+  }
+
   const body = `
+    <div class="filters">
+      <a href="/api/admin?from=${todayStr}&to=${todayStr}" class="${from === todayStr && to === todayStr ? 'active' : ''}">Bugun</a>
+      <a href="/api/admin?from=${isoDaysAgo(6)}&to=${todayStr}" class="${from === isoDaysAgo(6) && to === todayStr ? 'active' : ''}">Oxirgi 7 kun</a>
+      <a href="/api/admin?from=${isoDaysAgo(29)}&to=${todayStr}" class="${from === isoDaysAgo(29) && to === todayStr ? 'active' : ''}">Oxirgi 30 kun</a>
+      <a href="/api/admin?from=0000-00-00&to=${todayStr}" class="${from === '0000-00-00' ? 'active' : ''}">Barchasi</a>
+      <form id="rangef">
+        <input type="date" id="fromInput" value="${from === '0000-00-00' ? '' : from}">
+        <span>—</span>
+        <input type="date" id="toInput" value="${to}">
+        <button type="submit">Ko'rish</button>
+      </form>
+    </div>
     <div class="cards">
       <div class="card"><div class="num">${totalComments}</div><div class="label">Jami kommentlar</div></div>
       <div class="card"><div class="num">${totalReplied}</div><div class="label">Javob berilgan (${overallReplyRate}%)</div></div>
@@ -305,6 +333,14 @@ export default async function adminHandler(req, res, path) {
     <h2>Raqam qoldirganlar (batafsil)</h2>
     <table><tr><th>Foydalanuvchi</th><th>Raqam</th><th>Vaqt</th></tr>${leadRows || '<tr><td colspan="3">Hali yo\'q</td></tr>'}</table>
     <h2>Javob berilganlar (batafsil)</h2>
-    <table><tr><th>Foydalanuvchi</th><th>Komment</th><th>Vaqt</th></tr>${repliedRows || '<tr><td colspan="3">Hali yo\'q</td></tr>'}</table>`;
+    <table><tr><th>Foydalanuvchi</th><th>Komment</th><th>Vaqt</th></tr>${repliedRows || '<tr><td colspan="3">Hali yo\'q</td></tr>'}</table>
+    <script>
+      document.getElementById('rangef').onsubmit = (e) => {
+        e.preventDefault();
+        const f = document.getElementById('fromInput').value || '0000-00-00';
+        const t = document.getElementById('toInput').value;
+        location.href = '/api/admin?from=' + f + '&to=' + t;
+      };
+    </script>`;
   return res.status(200).send(layout('Statistika', body, ''));
 }
