@@ -269,7 +269,7 @@ export default async function adminHandler(req, res, path) {
     try {
       const body = await readJsonBody(req);
       const badText = body.wrongText || 'Test xabar';
-      const MAX_MEDIA_PER_RUN = 3;
+      const MAX_MEDIA_PER_RUN = 1;
       const offset = Number(body.offset) || 0;
       const allMedia = await listRecentMedia(30);
       const media = allMedia.slice(offset, offset + MAX_MEDIA_PER_RUN);
