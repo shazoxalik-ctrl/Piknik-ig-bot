@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { kvGetJSON, kvHSet, kvHIncrBy, kvSAdd } from './_lib/kv.js';
-import { handleNewComment, todayKey } from './_lib/ig-actions.js';
+import { handleNewComment, handleFirstDirectContact, todayKey } from './_lib/ig-actions.js';
 
 export const config = { api: { bodyParser: false } };
 
@@ -39,6 +39,9 @@ async function handleMessagingEvent(event) {
   const senderId = event.sender?.id;
   const message = event.message;
   if (!senderId || !message || message.is_echo) return;
+
+  const contactResult = await handleFirstDirectContact(senderId);
+  console.log('handleFirstDirectContact result:', JSON.stringify(contactResult));
 
   const phone = extractPhone(message.text);
   if (!phone) return;
