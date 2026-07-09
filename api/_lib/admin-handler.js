@@ -1,6 +1,6 @@
 import { kvHGetAll, kvHSet, kvHDel, kvGetJSON, kvSetJSONPersistent, kvSetRaw, kvSMembers } from './kv.js';
 import { hashPassword, verifyPassword, signSession, verifySession, parseCookies } from './auth.js';
-import { handleNewComment } from './ig-actions.js';
+import { handleNewComment, handleFirstDirectContact } from './ig-actions.js';
 import { listRecentMedia, listMediaComments, listConversations, getConversationMessages } from './ig-graph.js';
 
 const DEFAULT_REPLY_TEXT = "Assalomu alaykum. Sizga direct'dan javob yubordim! 😊";
@@ -223,6 +223,7 @@ export default async function adminHandler(req, res, path) {
         if (last.from?.id && last.from.id !== process.env.IG_USER_ID) {
           unanswered.push({
             conversationId: conv.id,
+            senderId: last.from.id,
             username: last.from.username || last.from.id,
             lastMessage: last.message || '',
             time: last.created_time || '',
@@ -232,6 +233,28 @@ export default async function adminHandler(req, res, path) {
       return res.status(200).json({ ok: true, checked: conversations.length, unanswered });
     } catch (e) {
       console.error('backfill dms error', e);
+      return res.status(500).json({ error: String(e) });
+    }
+  }
+
+  if (req.method === 'POST' && path[0] === 'backfilldmsreply') {
+    try {
+      const conversations = await listConversations(50);
+      let checked = 0;
+      let sentCount = 0;
+      for (const conv of conversations) {
+        const msgs = await getConversationMessages(conv.id, 3);
+        if (!msgs.length) continue;
+        const last = msgs[0];
+        if (last.from?.id && last.from.id !== process.env.IG_USER_ID) {
+          checked++;
+          const result = await handleFirstDirectContact(last.from.id);
+          if (result.replied) sentCount++;
+        }
+      }
+      return res.status(200).json({ ok: true, checked, sentCount });
+    } catch (e) {
+      console.error('backfill dms reply error', e);
       return res.status(500).json({ error: String(e) });
     }
   }
@@ -315,8 +338,9 @@ export default async function adminHandler(req, res, path) {
       <div id="resComments" style="margin-top:16px;"></div>
 
       <h2 style="margin-top:40px;">Javobsiz DM'larni topish</h2>
-      <p style="color:#999;font-size:14px">Suhbatlarni tekshirib, oxirgi xabar mijozdan bo'lib, hali javob berilmaganlarini ro'yxat qiladi (avtomatik javob yubormaydi).</p>
+      <p style="color:#999;font-size:14px">Suhbatlarni tekshirib (shu jumladan "Message Requests" bo'limidagilar ham), oxirgi xabar mijozdan bo'lib, hali javob berilmaganlarini ro'yxat qiladi.</p>
       <button id="btnDms">DM'larni tekshirish</button>
+      <button id="btnDmsReply" style="display:none;margin-left:10px;">Ularga ovozli xabar yuborish</button>
       <div id="resDms" style="margin-top:16px;"></div>
 
       <script>
@@ -357,6 +381,16 @@ export default async function adminHandler(req, res, path) {
           document.getElementById('resDms').innerHTML =
             '<p>' + r.checked + ' ta suhbat tekshirildi, ' + (r.unanswered || []).length + ' tasi javobsiz.</p>' +
             '<table><tr><th>Foydalanuvchi</th><th>Oxirgi xabar</th><th>Vaqt</th></tr>' + (rows || '<tr><td colspan="3">Yo\\'q</td></tr>') + '</table>';
+          document.getElementById('btnDmsReply').style.display = (r.unanswered || []).length ? 'inline-block' : 'none';
+        };
+        document.getElementById('btnDmsReply').onclick = async () => {
+          const btn = document.getElementById('btnDmsReply');
+          btn.disabled = true; btn.textContent = 'Yuborilmoqda...';
+          const r = await postJSON('/api/admin/backfilldmsreply', {});
+          btn.disabled = false; btn.textContent = 'Ularga ovozli xabar yuborish';
+          if (!r.ok) { alert('Xatolik: ' + (r.error || 'nomalum')); return; }
+          alert(r.checked + ' ta suhbat qayta tekshirildi, ' + r.sentCount + ' kishiga yangi ovozli xabar yuborildi.');
+          document.getElementById('btnDms').click();
         };
       </script>`;
     return res.status(200).send(layout('Eski xabarlar', body, 'backfill'));
