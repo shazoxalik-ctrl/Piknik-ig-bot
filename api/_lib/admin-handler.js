@@ -276,29 +276,60 @@ export default async function adminHandler(req, res, path) {
       const messages = (await kvGetJSON('settings:messages')) || {};
       const correctText = messages.commentReplyText || DEFAULT_REPLY_TEXT;
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+      async function deleteWithRetry(id) {
+        let result = await deleteComment(id);
+        if (!result.ok && result.rateLimited) {
+          await sleep(4000);
+          result = await deleteComment(id);
+        }
+        return result;
+      }
+
       let scanned = 0;
       let fixedCount = 0;
       let rateLimitedStop = false;
       for (const m of media) {
         if (rateLimitedStop) break;
         const comments = await listMediaComments(m.id);
+
+        // Group our own replies by the parent comment they were replying to,
+        // so we only ever end up with exactly one (correct) reply per parent —
+        // never one new reply per deleted bad reply.
+        const ownRepliesByParent = new Map();
         for (const c of comments) {
-          if (c.from?.id === process.env.IG_USER_ID && c.text === badText && c.parentId) {
+          if (c.from?.id === process.env.IG_USER_ID && c.parentId) {
+            if (!ownRepliesByParent.has(c.parentId)) ownRepliesByParent.set(c.parentId, []);
+            ownRepliesByParent.get(c.parentId).push(c);
+          }
+        }
+
+        for (const [parentId, replies] of ownRepliesByParent) {
+          if (rateLimitedStop) break;
+          const badOnes = replies.filter((c) => c.text === badText);
+          const correctOnes = replies.filter((c) => c.text === correctText);
+          const extraCorrectOnes = correctOnes.slice(1); // keep the first, delete the rest
+          const toDelete = [...badOnes, ...extraCorrectOnes];
+          if (toDelete.length === 0) continue;
+
+          let deletedAny = false;
+          for (const c of toDelete) {
             scanned++;
-            let result = await deleteComment(c.id);
-            if (!result.ok && result.rateLimited) {
-              await sleep(4000);
-              result = await deleteComment(c.id);
-            }
+            const result = await deleteWithRetry(c.id);
             if (result.ok) {
-              await sendPublicCommentReply(c.parentId, correctText);
-              fixedCount++;
+              deletedAny = true;
               await sleep(800);
             } else if (result.rateLimited) {
               rateLimitedStop = true;
               break;
             }
           }
+
+          if (correctOnes.length === 0 && deletedAny) {
+            await sendPublicCommentReply(parentId, correctText);
+            await sleep(800);
+          }
+          if (deletedAny) fixedCount++;
         }
       }
       const nextOffset = rateLimitedStop ? offset : offset + media.length;
