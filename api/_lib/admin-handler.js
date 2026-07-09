@@ -148,14 +148,14 @@ export default async function adminHandler(req, res, path) {
     return res.status(200).send(loginPage(req.query.error === '1'));
   }
 
-  if (req.method === 'POST' && path[0] === 'users' && path[1] === 'add') {
+  if (req.method === 'POST' && path[0] === 'useradd') {
     const { username, password } = await readJsonBody(req);
     if (!username || !password || password.length < 4) return res.status(400).json({ error: 'invalid' });
     await kvHSet('admin:users', username, { passwordHash: hashPassword(password), createdAt: Date.now() });
     return res.status(200).json({ ok: true });
   }
 
-  if (req.method === 'POST' && path[0] === 'users' && path[1] === 'delete') {
+  if (req.method === 'POST' && path[0] === 'userdelete') {
     const { username } = await readJsonBody(req);
     const all = await kvHGetAll('admin:users');
     if (Object.keys(all).length <= 1) return res.status(400).json({ error: 'last admin' });
@@ -163,14 +163,14 @@ export default async function adminHandler(req, res, path) {
     return res.status(200).json({ ok: true });
   }
 
-  if (req.method === 'POST' && path[0] === 'settings' && path[1] === 'message') {
+  if (req.method === 'POST' && path[0] === 'settingsmessage') {
     const { commentReplyText } = await readJsonBody(req);
     if (!commentReplyText) return res.status(400).json({ error: 'invalid' });
     await kvSetJSONPersistent('settings:messages', { commentReplyText });
     return res.status(200).json({ ok: true });
   }
 
-  if (req.method === 'POST' && path[0] === 'settings' && path[1] === 'audio') {
+  if (req.method === 'POST' && path[0] === 'settingsaudio') {
     const { dataUrl } = await readJsonBody(req);
     const match = /^data:(.+);base64,(.+)$/.exec(dataUrl || '');
     if (!match) return res.status(400).json({ error: 'invalid file' });
@@ -179,7 +179,7 @@ export default async function adminHandler(req, res, path) {
     return res.status(200).json({ ok: true });
   }
 
-  if (req.method === 'POST' && path[0] === 'backfill' && path[1] === 'comments') {
+  if (req.method === 'POST' && path[0] === 'backfillcomments') {
     try {
       const media = await listRecentMedia(30);
       let totalComments = 0;
@@ -199,7 +199,7 @@ export default async function adminHandler(req, res, path) {
     }
   }
 
-  if (req.method === 'POST' && path[0] === 'backfill' && path[1] === 'dms') {
+  if (req.method === 'POST' && path[0] === 'backfilldms') {
     try {
       const conversations = await listConversations(50);
       const unanswered = [];
@@ -247,12 +247,12 @@ export default async function adminHandler(req, res, path) {
       <script>
         async function del(u) {
           if (!confirm("O'chirilsinmi: " + u + "?")) return;
-          const r = await postJSON('/api/admin/users/delete', { username: u });
+          const r = await postJSON('/api/admin/userdelete', { username: u });
           if (r.ok) location.reload(); else alert('Xatolik: oxirgi adminni o\\'chirib bo\\'lmaydi');
         }
         document.getElementById('addf').onsubmit = async (e) => {
           e.preventDefault();
-          const r = await postJSON('/api/admin/users/add', { username: document.getElementById('nu').value, password: document.getElementById('np').value });
+          const r = await postJSON('/api/admin/useradd', { username: document.getElementById('nu').value, password: document.getElementById('np').value });
           if (r.ok) location.reload(); else alert('Xatolik');
         };
       </script>`;
@@ -276,7 +276,7 @@ export default async function adminHandler(req, res, path) {
       <script>
         document.getElementById('msgf').onsubmit = async (e) => {
           e.preventDefault();
-          const r = await postJSON('/api/admin/settings/message', { commentReplyText: document.getElementById('msg').value });
+          const r = await postJSON('/api/admin/settingsmessage', { commentReplyText: document.getElementById('msg').value });
           if (r.ok) alert('Saqlandi'); else alert('Xatolik');
         };
         document.getElementById('audiof').onsubmit = async (e) => {
@@ -285,7 +285,7 @@ export default async function adminHandler(req, res, path) {
           if (!file) return;
           const reader = new FileReader();
           reader.onload = async () => {
-            const r = await postJSON('/api/admin/settings/audio', { dataUrl: reader.result });
+            const r = await postJSON('/api/admin/settingsaudio', { dataUrl: reader.result });
             if (r.ok) alert('Yuklandi'); else alert('Xatolik');
           };
           reader.readAsDataURL(file);
@@ -310,7 +310,7 @@ export default async function adminHandler(req, res, path) {
         document.getElementById('btnComments').onclick = async () => {
           const btn = document.getElementById('btnComments');
           btn.disabled = true; btn.textContent = 'Tekshirilmoqda...';
-          const r = await postJSON('/api/admin/backfill/comments', {});
+          const r = await postJSON('/api/admin/backfillcomments', {});
           btn.disabled = false; btn.textContent = 'Kommentlarni tekshirish';
           document.getElementById('resComments').innerHTML = r.ok
             ? '<p>' + r.mediaChecked + ' ta post tekshirildi, ' + r.totalComments + ' ta komment topildi, ' + r.repliedCount + ' tasiga yangi javob yuborildi.</p>'
@@ -319,7 +319,7 @@ export default async function adminHandler(req, res, path) {
         document.getElementById('btnDms').onclick = async () => {
           const btn = document.getElementById('btnDms');
           btn.disabled = true; btn.textContent = 'Tekshirilmoqda...';
-          const r = await postJSON('/api/admin/backfill/dms', {});
+          const r = await postJSON('/api/admin/backfilldms', {});
           btn.disabled = false; btn.textContent = 'DM\\'larni tekshirish';
           if (!r.ok) {
             document.getElementById('resDms').innerHTML = '<p style="color:#ff6b6b">Xatolik: ' + (r.error || 'nomalum') + '</p>';
