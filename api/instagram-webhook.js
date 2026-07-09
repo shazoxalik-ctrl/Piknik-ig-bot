@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { kvGetJSON, kvSetJSON, kvHSet } from './_lib/kv.js';
+import { kvGetJSON, kvSetJSON, kvHSet, kvHIncrBy, kvSAdd } from './_lib/kv.js';
 
 export const config = { api: { bodyParser: false } };
 
@@ -64,6 +64,10 @@ async function sendPublicCommentReply(commentId, text) {
   return r;
 }
 
+function todayKey() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' });
+}
+
 async function handleComment(value) {
   console.log('handleComment received:', JSON.stringify(value));
   if (!value?.id || !value?.from?.id) {
@@ -74,6 +78,10 @@ async function handleComment(value) {
     console.log('handleComment skipped: comment authored by our own account');
     return;
   }
+  const day = todayKey();
+  await kvSAdd('stats:days', day);
+  await kvHIncrBy(`stats:day:${day}`, 'comments');
+
   const stateKey = `ig:${value.from.id}`;
   const existing = await kvGetJSON(stateKey);
   if (existing) return; // already engaged with this user, avoid re-greeting on every comment
@@ -82,6 +90,7 @@ async function handleComment(value) {
   const repliedAt = Date.now();
   await kvSetJSON(stateKey, { repliedAt, username });
   await kvHSet('stats:replied', value.from.id, { username, commentText: value.text || '', repliedAt });
+  await kvHIncrBy(`stats:day:${day}`, 'replied');
 
   const messages = (await kvGetJSON('settings:messages')) || {};
   const replyText = messages.commentReplyText || "Assalomu alaykum. Sizga direct'dan javob yubordim! 😊";
@@ -114,6 +123,9 @@ async function handleMessagingEvent(event) {
     text: message.text,
     capturedAt: Date.now(),
   });
+  const day = todayKey();
+  await kvSAdd('stats:days', day);
+  await kvHIncrBy(`stats:day:${day}`, 'leads');
   console.log('Phone captured:', senderId, phone);
 }
 
