@@ -1,4 +1,4 @@
-import { kvHGetAll, kvHSet, kvHDel, kvGetJSON, kvSetJSONPersistent, kvSetRaw } from './kv.js';
+import { kvHGetAll, kvHSet, kvHDel, kvGetJSON, kvSetJSONPersistent, kvSetRaw, kvSMembers } from './kv.js';
 import { hashPassword, verifyPassword, signSession, verifySession, parseCookies } from './auth.js';
 
 const DEFAULT_REPLY_TEXT = "Assalomu alaykum. Sizga direct'dan javob yubordim! 😊";
@@ -241,7 +241,41 @@ export default async function adminHandler(req, res, path) {
     return res.status(200).send(layout('Sozlamalar', body, 'settings'));
   }
 
-  const [replied, leads] = await Promise.all([kvHGetAll('stats:replied'), kvHGetAll('stats:leads')]);
+  const [replied, leads, days] = await Promise.all([
+    kvHGetAll('stats:replied'),
+    kvHGetAll('stats:leads'),
+    kvSMembers('stats:days'),
+  ]);
+
+  const sortedDays = days.sort().reverse();
+  const dayStats = await Promise.all(sortedDays.map((day) => kvHGetAll(`stats:day:${day}`)));
+
+  let totalComments = 0, totalReplied = 0, totalLeads = 0;
+  const dayRows = sortedDays
+    .map((day, i) => {
+      const s = dayStats[i] || {};
+      const comments = Number(s.comments) || 0;
+      const repliedCount = Number(s.replied) || 0;
+      const leadsCount = Number(s.leads) || 0;
+      totalComments += comments;
+      totalReplied += repliedCount;
+      totalLeads += leadsCount;
+      const replyRate = comments > 0 ? ((repliedCount / comments) * 100).toFixed(0) : '0';
+      const convRate = repliedCount > 0 ? ((leadsCount / repliedCount) * 100).toFixed(0) : '0';
+      return `<tr>
+        <td>${day}</td>
+        <td>${comments}</td>
+        <td>${repliedCount}</td>
+        <td>${replyRate}%</td>
+        <td>${leadsCount}</td>
+        <td>${convRate}%</td>
+      </tr>`;
+    })
+    .join('');
+
+  const overallReplyRate = totalComments > 0 ? ((totalReplied / totalComments) * 100).toFixed(0) : '0';
+  const overallConvRate = totalReplied > 0 ? ((totalLeads / totalReplied) * 100).toFixed(0) : '0';
+
   const repliedRows = Object.entries(replied)
     .sort((a, b) => (b[1].repliedAt || 0) - (a[1].repliedAt || 0))
     .map(
@@ -256,14 +290,21 @@ export default async function adminHandler(req, res, path) {
         `<tr><td>${v.username || id}</td><td>${v.phone}</td><td>${new Date(v.capturedAt).toLocaleString('uz-UZ')}</td></tr>`
     )
     .join('');
+
   const body = `
     <div class="cards">
-      <div class="card"><div class="num">${Object.keys(replied).length}</div><div class="label">Javob berilgan odamlar</div></div>
-      <div class="card"><div class="num">${Object.keys(leads).length}</div><div class="label">Raqam qoldirganlar</div></div>
+      <div class="card"><div class="num">${totalComments}</div><div class="label">Jami kommentlar</div></div>
+      <div class="card"><div class="num">${totalReplied}</div><div class="label">Javob berilgan (${overallReplyRate}%)</div></div>
+      <div class="card"><div class="num">${totalLeads}</div><div class="label">Raqam qoldirgan (${overallConvRate}%)</div></div>
     </div>
-    <h2>Raqam qoldirganlar</h2>
+    <h2>Kunlik statistika</h2>
+    <table>
+      <tr><th>Sana</th><th>Kommentlar</th><th>Javob berildi</th><th>Javob %</th><th>Raqam qoldirdi</th><th>Konversiya %</th></tr>
+      ${dayRows || '<tr><td colspan="6">Hali yo\'q</td></tr>'}
+    </table>
+    <h2>Raqam qoldirganlar (batafsil)</h2>
     <table><tr><th>Foydalanuvchi</th><th>Raqam</th><th>Vaqt</th></tr>${leadRows || '<tr><td colspan="3">Hali yo\'q</td></tr>'}</table>
-    <h2>Javob berilganlar</h2>
+    <h2>Javob berilganlar (batafsil)</h2>
     <table><tr><th>Foydalanuvchi</th><th>Komment</th><th>Vaqt</th></tr>${repliedRows || '<tr><td colspan="3">Hali yo\'q</td></tr>'}</table>`;
   return res.status(200).send(layout('Statistika', body, ''));
 }
