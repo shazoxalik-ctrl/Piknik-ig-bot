@@ -58,3 +58,19 @@ export async function kvGetRaw(key) {
   if (!KV_URL || !KV_TOKEN) return null;
   return await kvCommand(['GET', key]);
 }
+
+export async function kvHIncrBy(key, field, amount = 1) {
+  if (!KV_URL || !KV_TOKEN) return;
+  await kvCommand(['HINCRBY', key, field, String(amount)]);
+}
+
+export async function kvSAdd(key, member) {
+  if (!KV_URL || !KV_TOKEN) return;
+  await kvCommand(['SADD', key, member]);
+}
+
+export async function kvSMembers(key) {
+  if (!KV_URL || !KV_TOKEN) return [];
+  const r = await kvCommand(['SMEMBERS', key]);
+  return Array.isArray(r) ? r : [];
+}
