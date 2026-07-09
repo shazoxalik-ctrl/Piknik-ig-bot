@@ -8,6 +8,7 @@ async function kvCommand(command) {
     body: JSON.stringify(command),
   });
   const data = await r.json();
+  console.log('kvCommand', JSON.stringify(command), '->', r.status, JSON.stringify(data));
   return data.result;
 }
 
