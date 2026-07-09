@@ -181,7 +181,10 @@ export default async function adminHandler(req, res, path) {
 
   if (req.method === 'POST' && path[0] === 'backfillcomments') {
     try {
-      const media = await listRecentMedia(30);
+      const MAX_MEDIA_PER_RUN = 4;
+      const offset = Number((await readJsonBody(req)).offset) || 0;
+      const allMedia = await listRecentMedia(30);
+      const media = allMedia.slice(offset, offset + MAX_MEDIA_PER_RUN);
       let totalComments = 0;
       let repliedCount = 0;
       for (const m of media) {
@@ -192,7 +195,17 @@ export default async function adminHandler(req, res, path) {
           if (result.replied) repliedCount++;
         }
       }
-      return res.status(200).json({ ok: true, mediaChecked: media.length, totalComments, repliedCount });
+      const nextOffset = offset + media.length;
+      const hasMore = nextOffset < allMedia.length;
+      return res.status(200).json({
+        ok: true,
+        mediaChecked: media.length,
+        totalComments,
+        repliedCount,
+        hasMore,
+        nextOffset,
+        totalMedia: allMedia.length,
+      });
     } catch (e) {
       console.error('backfill comments error', e);
       return res.status(500).json({ error: String(e) });
@@ -309,12 +322,25 @@ export default async function adminHandler(req, res, path) {
       <script>
         document.getElementById('btnComments').onclick = async () => {
           const btn = document.getElementById('btnComments');
-          btn.disabled = true; btn.textContent = 'Tekshirilmoqda...';
-          const r = await postJSON('/api/admin/backfillcomments', {});
-          btn.disabled = false; btn.textContent = 'Kommentlarni tekshirish';
-          document.getElementById('resComments').innerHTML = r.ok
-            ? '<p>' + r.mediaChecked + ' ta post tekshirildi, ' + r.totalComments + ' ta komment topildi, ' + r.repliedCount + ' tasiga yangi javob yuborildi.</p>'
-            : '<p style="color:#ff6b6b">Xatolik: ' + (r.error || 'nomalum') + '</p>';
+          const resEl = document.getElementById('resComments');
+          btn.disabled = true;
+          let offset = 0, totalMedia = 0, totalComments = 0, repliedCount = 0, mediaDone = 0;
+          try {
+            while (true) {
+              btn.textContent = 'Tekshirilmoqda... (' + mediaDone + (totalMedia ? '/' + totalMedia : '') + ' post)';
+              const r = await postJSON('/api/admin/backfillcomments', { offset });
+              if (!r.ok) {
+                resEl.innerHTML = '<p style="color:#ff6b6b">Xatolik: ' + (r.error || 'nomalum') + '</p>';
+                break;
+              }
+              totalMedia = r.totalMedia; totalComments += r.totalComments; repliedCount += r.repliedCount; mediaDone += r.mediaChecked;
+              resEl.innerHTML = '<p>' + mediaDone + '/' + totalMedia + ' ta post tekshirildi, ' + totalComments + ' ta komment topildi, ' + repliedCount + ' tasiga yangi javob yuborildi.</p>';
+              if (!r.hasMore) break;
+              offset = r.nextOffset;
+            }
+          } finally {
+            btn.disabled = false; btn.textContent = 'Kommentlarni tekshirish';
+          }
         };
         document.getElementById('btnDms').onclick = async () => {
           const btn = document.getElementById('btnDms');
