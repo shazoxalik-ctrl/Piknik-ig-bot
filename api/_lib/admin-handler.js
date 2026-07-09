@@ -275,26 +275,44 @@ export default async function adminHandler(req, res, path) {
       const media = allMedia.slice(offset, offset + MAX_MEDIA_PER_RUN);
       const messages = (await kvGetJSON('settings:messages')) || {};
       const correctText = messages.commentReplyText || DEFAULT_REPLY_TEXT;
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       let scanned = 0;
       let fixedCount = 0;
+      let rateLimitedStop = false;
       for (const m of media) {
+        if (rateLimitedStop) break;
         const comments = await listMediaComments(m.id);
         for (const c of comments) {
           if (c.from?.id === process.env.IG_USER_ID && c.text === badText && c.parentId) {
             scanned++;
-            const deleted = await deleteComment(c.id);
-            if (deleted) {
+            let result = await deleteComment(c.id);
+            if (!result.ok && result.rateLimited) {
+              await sleep(4000);
+              result = await deleteComment(c.id);
+            }
+            if (result.ok) {
               await sendPublicCommentReply(c.parentId, correctText);
               fixedCount++;
+              await sleep(800);
+            } else if (result.rateLimited) {
+              rateLimitedStop = true;
+              break;
             }
           }
         }
       }
-      const nextOffset = offset + media.length;
-      const hasMore = nextOffset < allMedia.length;
-      return res
-        .status(200)
-        .json({ ok: true, mediaChecked: media.length, scanned, fixedCount, hasMore, nextOffset, totalMedia: allMedia.length });
+      const nextOffset = rateLimitedStop ? offset : offset + media.length;
+      const hasMore = rateLimitedStop ? true : nextOffset < allMedia.length;
+      return res.status(200).json({
+        ok: true,
+        mediaChecked: media.length,
+        scanned,
+        fixedCount,
+        hasMore,
+        nextOffset,
+        totalMedia: allMedia.length,
+        rateLimited: rateLimitedStop,
+      });
     } catch (e) {
       console.error('fixwrongreplies error', e);
       return res.status(500).json({ error: String(e) });
