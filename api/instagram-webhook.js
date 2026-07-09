@@ -83,7 +83,9 @@ async function handleComment(value) {
   await kvSetJSON(stateKey, { repliedAt, username });
   await kvHSet('stats:replied', value.from.id, { username, commentText: value.text || '', repliedAt });
 
-  await sendPublicCommentReply(value.id, "Assalomu alaykum. Sizga direct'dan javob yubordim! 😊");
+  const messages = (await kvGetJSON('settings:messages')) || {};
+  const replyText = messages.commentReplyText || "Assalomu alaykum. Sizga direct'dan javob yubordim! 😊";
+  await sendPublicCommentReply(value.id, replyText);
 
   const audioUrl = process.env.WELCOME_AUDIO_URL;
   if (audioUrl) await sendPrivateReplyAudio(value.id, audioUrl);
