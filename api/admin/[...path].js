@@ -1,0 +1,271 @@
+import { kvHGetAll, kvHSet, kvHDel, kvGetJSON, kvSetJSONPersistent, kvSetRaw } from '../_lib/kv.js';
+import { hashPassword, verifyPassword, signSession, verifySession, parseCookies } from '../_lib/auth.js';
+
+export const config = { api: { bodyParser: false } };
+
+const DEFAULT_REPLY_TEXT = "Assalomu alaykum. Sizga direct'dan javob yubordim! 😊";
+
+async function readJsonBody(req) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(chunk);
+  const raw = Buffer.concat(chunks).toString('utf8');
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+async function checkLogin(username, password) {
+  if (!username || !password) return false;
+  const admins = await kvHGetAll('admin:users');
+  if (Object.keys(admins).length === 0) {
+    const envUser = process.env.ADMIN_USERNAME;
+    const envPass = process.env.ADMIN_PASSWORD;
+    if (envUser && envPass && username === envUser && password === envPass) {
+      await kvHSet('admin:users', username, { passwordHash: hashPassword(password), createdAt: Date.now() });
+      return true;
+    }
+    return false;
+  }
+  const record = admins[username];
+  if (!record) return false;
+  return verifyPassword(password, record.passwordHash);
+}
+
+function layout(title, body, active) {
+  const nav = [
+    ['', 'Statistika'],
+    ['users', 'Adminlar'],
+    ['settings', 'Sozlamalar'],
+  ];
+  const navHtml = nav
+    .map(([path, label]) => `<a href="/api/admin/${path}" class="${active === path ? 'active' : ''}">${label}</a>`)
+    .join('');
+  return `<!DOCTYPE html>
+<html lang="uz"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${title} — Piknic UZ Admin</title>
+<style>
+  body { font-family: -apple-system, Arial, sans-serif; background: #111; color: #eee; margin: 0; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 16px 32px; border-bottom: 1px solid #262626; flex-wrap: wrap; gap: 8px; }
+  nav a { color: #999; text-decoration: none; margin-right: 20px; font-size: 14px; }
+  nav a.active, nav a:hover { color: #fff; }
+  main { padding: 32px; max-width: 900px; }
+  .cards { display: flex; gap: 16px; margin-bottom: 32px; flex-wrap: wrap; }
+  .card { background: #1c1c1c; border-radius: 12px; padding: 20px 28px; }
+  .card .num { font-size: 32px; font-weight: 700; }
+  .card .label { font-size: 13px; color: #999; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 32px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #292929; font-size: 14px; }
+  th { color: #999; font-weight: 500; }
+  h2 { font-size: 16px; color: #ccc; }
+  input, textarea { width: 100%; padding: 10px; margin-bottom: 12px; border-radius: 6px; border: 1px solid #333; background: #0d0d0d; color: #eee; box-sizing: border-box; font-family: inherit; }
+  button { padding: 10px 18px; border-radius: 6px; border: none; background: #4f7dfb; color: white; font-weight: 600; cursor: pointer; }
+  button.danger { background: #d9534f; padding: 6px 12px; font-size: 13px; }
+  form { max-width: 420px; margin-bottom: 32px; }
+  .row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #262626; max-width: 420px; }
+  a.logout { cursor: pointer; }
+</style></head>
+<body>
+  <header>
+    <strong>Piknic UZ — Admin</strong>
+    <nav>${navHtml}<a class="logout" onclick="logout()">Chiqish</a></nav>
+  </header>
+  <main>${body}</main>
+  <script>
+    async function postJSON(url, data) {
+      const r = await fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data) });
+      return { ok: r.ok, ...(await r.json().catch(() => ({}))) };
+    }
+    async function logout() {
+      await fetch('/api/admin/logout', { method: 'POST' });
+      location.href = '/api/admin';
+    }
+  </script>
+</body></html>`;
+}
+
+function loginPage(error) {
+  return `<!DOCTYPE html>
+<html lang="uz"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Kirish — Piknic UZ Admin</title>
+<style>
+  body { font-family: -apple-system, Arial, sans-serif; background: #111; color: #eee; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+  form { background: #1c1c1c; padding: 32px; border-radius: 12px; width: 300px; }
+  h1 { font-size: 18px; margin: 0 0 16px; }
+  input { width: 100%; padding: 10px; margin-bottom: 12px; border-radius: 6px; border: 1px solid #333; background: #0d0d0d; color: #eee; box-sizing: border-box; }
+  button { width: 100%; padding: 10px; border-radius: 6px; border: none; background: #4f7dfb; color: white; font-weight: 600; cursor: pointer; }
+  .err { color: #ff6b6b; font-size: 13px; margin-bottom: 12px; }
+</style></head>
+<body>
+  <form id="f">
+    <h1>Admin panel — kirish</h1>
+    ${error ? `<div class="err">Login yoki parol noto'g'ri</div>` : ''}
+    <input type="text" id="username" placeholder="Login" autofocus>
+    <input type="password" id="password" placeholder="Parol">
+    <button type="submit">Kirish</button>
+  </form>
+  <script>
+    document.getElementById('f').onsubmit = async (e) => {
+      e.preventDefault();
+      const r = await fetch('/api/admin/login', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ username: document.getElementById('username').value, password: document.getElementById('password').value })
+      });
+      if (r.ok) location.href = '/api/admin';
+      else location.href = '/api/admin?error=1';
+    };
+  </script>
+</body></html>`;
+}
+
+export default async function handler(req, res) {
+  const path = req.query.path || [];
+  const cookies = parseCookies(req.headers.cookie);
+  const currentUser = verifySession(cookies.admin_session);
+
+  if (req.method === 'POST' && path[0] === 'login') {
+    const { username, password } = await readJsonBody(req);
+    const ok = await checkLogin(username, password);
+    if (!ok) return res.status(401).json({ error: 'invalid' });
+    res.setHeader('Set-Cookie', `admin_session=${signSession(username)}; HttpOnly; Path=/; Max-Age=2592000; SameSite=Lax`);
+    return res.status(200).json({ ok: true });
+  }
+
+  if (req.method === 'POST' && path[0] === 'logout') {
+    res.setHeader('Set-Cookie', 'admin_session=; HttpOnly; Path=/; Max-Age=0');
+    return res.status(200).json({ ok: true });
+  }
+
+  if (!currentUser) {
+    res.setHeader('Content-Type', 'text/html');
+    return res.status(200).send(loginPage(req.query.error === '1'));
+  }
+
+  if (req.method === 'POST' && path[0] === 'users' && path[1] === 'add') {
+    const { username, password } = await readJsonBody(req);
+    if (!username || !password || password.length < 4) return res.status(400).json({ error: 'invalid' });
+    await kvHSet('admin:users', username, { passwordHash: hashPassword(password), createdAt: Date.now() });
+    return res.status(200).json({ ok: true });
+  }
+
+  if (req.method === 'POST' && path[0] === 'users' && path[1] === 'delete') {
+    const { username } = await readJsonBody(req);
+    const all = await kvHGetAll('admin:users');
+    if (Object.keys(all).length <= 1) return res.status(400).json({ error: 'last admin' });
+    await kvHDel('admin:users', username);
+    return res.status(200).json({ ok: true });
+  }
+
+  if (req.method === 'POST' && path[0] === 'settings' && path[1] === 'message') {
+    const { commentReplyText } = await readJsonBody(req);
+    if (!commentReplyText) return res.status(400).json({ error: 'invalid' });
+    await kvSetJSONPersistent('settings:messages', { commentReplyText });
+    return res.status(200).json({ ok: true });
+  }
+
+  if (req.method === 'POST' && path[0] === 'settings' && path[1] === 'audio') {
+    const { dataUrl } = await readJsonBody(req);
+    const match = /^data:(.+);base64,(.+)$/.exec(dataUrl || '');
+    if (!match) return res.status(400).json({ error: 'invalid file' });
+    await kvSetRaw('settings:audio_b64', match[2]);
+    await kvSetJSONPersistent('settings:audio_meta', { mimeType: match[1], updatedAt: Date.now() });
+    return res.status(200).json({ ok: true });
+  }
+
+  res.setHeader('Content-Type', 'text/html');
+
+  if (path[0] === 'users') {
+    const admins = await kvHGetAll('admin:users');
+    const rows = Object.keys(admins)
+      .map(
+        (u) =>
+          `<div class="row"><span>${u}</span>${
+            Object.keys(admins).length > 1 ? `<button class="danger" onclick="del('${u}')">O'chirish</button>` : ''
+          }</div>`
+      )
+      .join('');
+    const body = `
+      <h2>Adminlar</h2>
+      ${rows || '<p>Hali yo\'q</p>'}
+      <h2>Yangi admin qo'shish</h2>
+      <form id="addf">
+        <input type="text" id="nu" placeholder="Login">
+        <input type="password" id="np" placeholder="Parol (kamida 4 belgi)">
+        <button type="submit">Qo'shish</button>
+      </form>
+      <script>
+        async function del(u) {
+          if (!confirm("O'chirilsinmi: " + u + "?")) return;
+          const r = await postJSON('/api/admin/users/delete', { username: u });
+          if (r.ok) location.reload(); else alert('Xatolik: oxirgi adminni o\\'chirib bo\\'lmaydi');
+        }
+        document.getElementById('addf').onsubmit = async (e) => {
+          e.preventDefault();
+          const r = await postJSON('/api/admin/users/add', { username: document.getElementById('nu').value, password: document.getElementById('np').value });
+          if (r.ok) location.reload(); else alert('Xatolik');
+        };
+      </script>`;
+    return res.status(200).send(layout('Adminlar', body, 'users'));
+  }
+
+  if (path[0] === 'settings') {
+    const messages = (await kvGetJSON('settings:messages')) || {};
+    const body = `
+      <h2>Kommentga ochiq javob matni</h2>
+      <form id="msgf">
+        <textarea id="msg" rows="3">${messages.commentReplyText || DEFAULT_REPLY_TEXT}</textarea>
+        <button type="submit">Saqlash</button>
+      </form>
+      <h2>Ovozli xabar</h2>
+      <p style="color:#999;font-size:14px">Yangi audio fayl yuklang (mp3, m4a yoki wav) — avtomatik almashtiriladi.</p>
+      <form id="audiof">
+        <input type="file" id="audio" accept="audio/*">
+        <button type="submit">Yuklash</button>
+      </form>
+      <script>
+        document.getElementById('msgf').onsubmit = async (e) => {
+          e.preventDefault();
+          const r = await postJSON('/api/admin/settings/message', { commentReplyText: document.getElementById('msg').value });
+          if (r.ok) alert('Saqlandi'); else alert('Xatolik');
+        };
+        document.getElementById('audiof').onsubmit = async (e) => {
+          e.preventDefault();
+          const file = document.getElementById('audio').files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = async () => {
+            const r = await postJSON('/api/admin/settings/audio', { dataUrl: reader.result });
+            if (r.ok) alert('Yuklandi'); else alert('Xatolik');
+          };
+          reader.readAsDataURL(file);
+        };
+      </script>`;
+    return res.status(200).send(layout('Sozlamalar', body, 'settings'));
+  }
+
+  const [replied, leads] = await Promise.all([kvHGetAll('stats:replied'), kvHGetAll('stats:leads')]);
+  const repliedRows = Object.entries(replied)
+    .sort((a, b) => (b[1].repliedAt || 0) - (a[1].repliedAt || 0))
+    .map(
+      ([id, v]) =>
+        `<tr><td>${v.username || id}</td><td>${(v.commentText || '').slice(0, 60)}</td><td>${new Date(v.repliedAt).toLocaleString('uz-UZ')}</td></tr>`
+    )
+    .join('');
+  const leadRows = Object.entries(leads)
+    .sort((a, b) => (b[1].capturedAt || 0) - (a[1].capturedAt || 0))
+    .map(
+      ([id, v]) =>
+        `<tr><td>${v.username || id}</td><td>${v.phone}</td><td>${new Date(v.capturedAt).toLocaleString('uz-UZ')}</td></tr>`
+    )
+    .join('');
+  const body = `
+    <div class="cards">
+      <div class="card"><div class="num">${Object.keys(replied).length}</div><div class="label">Javob berilgan odamlar</div></div>
+      <div class="card"><div class="num">${Object.keys(leads).length}</div><div class="label">Raqam qoldirganlar</div></div>
+    </div>
+    <h2>Raqam qoldirganlar</h2>
+    <table><tr><th>Foydalanuvchi</th><th>Raqam</th><th>Vaqt</th></tr>${leadRows || '<tr><td colspan="3">Hali yo\'q</td></tr>'}</table>
+    <h2>Javob berilganlar</h2>
+    <table><tr><th>Foydalanuvchi</th><th>Komment</th><th>Vaqt</th></tr>${repliedRows || '<tr><td colspan="3">Hali yo\'q</td></tr>'}</table>`;
+  return res.status(200).send(layout('Statistika', body, ''));
+}
