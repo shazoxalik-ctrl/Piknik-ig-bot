@@ -44,19 +44,22 @@ export async function handleNewComment(value) {
   await kvSAdd('stats:days', day);
   await kvHIncrBy(`stats:day:${day}`, 'comments');
 
+  const username = value.from.username || null;
+
+  // Every new comment gets a public reply, even if this user has commented before.
+  const messages = (await kvGetJSON('settings:messages')) || {};
+  const replyText = messages.commentReplyText || "Assalomu alaykum. Sizga direct'dan javob yubordim! 😊";
+  await sendPublicCommentReply(value.id, replyText);
+
   const stateKey = `ig:${value.from.id}`;
   const existing = await kvGetJSON(stateKey);
-  if (existing) return { skipped: 'already replied' };
+  if (existing) return { repliedPublicOnly: true, username };
 
-  const username = value.from.username || null;
+  // First time this user interacts with us — send the welcome audio DM once.
   const repliedAt = Date.now();
   await kvSetJSON(stateKey, { repliedAt, username });
   await kvHSet('stats:replied', value.from.id, { username, commentText: value.text || '', repliedAt });
   await kvHIncrBy(`stats:day:${day}`, 'replied');
-
-  const messages = (await kvGetJSON('settings:messages')) || {};
-  const replyText = messages.commentReplyText || "Assalomu alaykum. Sizga direct'dan javob yubordim! 😊";
-  await sendPublicCommentReply(value.id, replyText);
 
   const audioUrl = process.env.WELCOME_AUDIO_URL;
   if (audioUrl) await sendPrivateReplyAudio(value.id, audioUrl);
