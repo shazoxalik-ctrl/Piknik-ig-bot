@@ -6,7 +6,6 @@ import {
   listMediaComments,
   listConversations,
   getConversationMessages,
-  listCommentReplies,
   deleteComment,
 } from './ig-graph.js';
 
@@ -281,16 +280,12 @@ export default async function adminHandler(req, res, path) {
       for (const m of media) {
         const comments = await listMediaComments(m.id);
         for (const c of comments) {
-          if (c.from?.id === process.env.IG_USER_ID) continue;
-          const replies = await listCommentReplies(c.id);
-          for (const rep of replies) {
-            if (rep.from?.id === process.env.IG_USER_ID && rep.text === badText) {
-              scanned++;
-              const deleted = await deleteComment(rep.id);
-              if (deleted) {
-                await sendPublicCommentReply(c.id, correctText);
-                fixedCount++;
-              }
+          if (c.from?.id === process.env.IG_USER_ID && c.text === badText && c.parentId) {
+            scanned++;
+            const deleted = await deleteComment(c.id);
+            if (deleted) {
+              await sendPublicCommentReply(c.parentId, correctText);
+              fixedCount++;
             }
           }
         }
