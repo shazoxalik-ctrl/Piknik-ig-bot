@@ -1,9 +1,8 @@
 import crypto from 'node:crypto';
-import { kvGetJSON, kvSetJSON, kvHSet, kvHIncrBy, kvSAdd } from './_lib/kv.js';
+import { kvGetJSON, kvHSet, kvHIncrBy, kvSAdd } from './_lib/kv.js';
+import { handleNewComment, todayKey } from './_lib/ig-actions.js';
 
 export const config = { api: { bodyParser: false } };
-
-const GRAPH_URL = `https://graph.instagram.com/v21.0/${process.env.IG_USER_ID}/messages`;
 
 async function readRawBody(req) {
   const chunks = [];
@@ -22,82 +21,10 @@ function verifySignature(rawBody, signatureHeader) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
-async function sendToInstagram(body) {
-  const token = process.env.IG_ACCESS_TOKEN;
-  const r = await fetch(`${GRAPH_URL}?access_token=${encodeURIComponent(token)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const resText = await r.text();
-  if (!r.ok) {
-    console.error('Instagram send error:', r.status, resText);
-  } else {
-    console.log('Instagram send ok:', resText);
-  }
-  return r;
-}
-
-function sendPrivateReplyAudio(commentId, audioUrl) {
-  return sendToInstagram({
-    recipient: { comment_id: commentId },
-    message: { attachment: { type: 'audio', payload: { url: audioUrl, is_reusable: true } } },
-  });
-}
-
-async function sendPublicCommentReply(commentId, text) {
-  const token = process.env.IG_ACCESS_TOKEN;
-  const r = await fetch(
-    `https://graph.instagram.com/v21.0/${commentId}/replies?access_token=${encodeURIComponent(token)}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text }),
-    }
-  );
-  const resText = await r.text();
-  if (!r.ok) {
-    console.error('Instagram comment reply error:', r.status, resText);
-  } else {
-    console.log('Instagram comment reply ok:', resText);
-  }
-  return r;
-}
-
-function todayKey() {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' });
-}
-
 async function handleComment(value) {
   console.log('handleComment received:', JSON.stringify(value));
-  if (!value?.id || !value?.from?.id) {
-    console.log('handleComment skipped: missing id or from.id');
-    return;
-  }
-  if (value.from.id === process.env.IG_USER_ID) {
-    console.log('handleComment skipped: comment authored by our own account');
-    return;
-  }
-  const day = todayKey();
-  await kvSAdd('stats:days', day);
-  await kvHIncrBy(`stats:day:${day}`, 'comments');
-
-  const stateKey = `ig:${value.from.id}`;
-  const existing = await kvGetJSON(stateKey);
-  if (existing) return; // already engaged with this user, avoid re-greeting on every comment
-
-  const username = value.from.username || null;
-  const repliedAt = Date.now();
-  await kvSetJSON(stateKey, { repliedAt, username });
-  await kvHSet('stats:replied', value.from.id, { username, commentText: value.text || '', repliedAt });
-  await kvHIncrBy(`stats:day:${day}`, 'replied');
-
-  const messages = (await kvGetJSON('settings:messages')) || {};
-  const replyText = messages.commentReplyText || "Assalomu alaykum. Sizga direct'dan javob yubordim! 😊";
-  await sendPublicCommentReply(value.id, replyText);
-
-  const audioUrl = process.env.WELCOME_AUDIO_URL;
-  if (audioUrl) await sendPrivateReplyAudio(value.id, audioUrl);
+  const result = await handleNewComment(value);
+  console.log('handleComment result:', JSON.stringify(result));
 }
 
 function extractPhone(text) {
