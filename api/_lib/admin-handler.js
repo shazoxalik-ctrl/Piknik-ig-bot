@@ -1,6 +1,6 @@
 import { kvHGetAll, kvHSet, kvHDel, kvGetJSON, kvSetJSONPersistent, kvSetRaw, kvSMembers } from './kv.js';
 import { hashPassword, verifyPassword, signSession, verifySession, parseCookies } from './auth.js';
-import { handleNewComment, handleFirstDirectContact, sendPublicCommentReply } from './ig-actions.js';
+import { handleNewComment, handleFirstDirectContact } from './ig-actions.js';
 import {
   listRecentMedia,
   listMediaComments,
@@ -266,15 +266,15 @@ export default async function adminHandler(req, res, path) {
   }
 
   if (req.method === 'POST' && path[0] === 'fixwrongreplies') {
+    // Deletes every reply the bot itself has ever posted (correct or wrong text alike).
+    // We no longer try to detect/repair old replies — going forward only brand new
+    // incoming comments get a single reply each (see handleNewComment's per-comment guard).
     try {
       const body = await readJsonBody(req);
-      const badText = body.wrongText || 'Test xabar';
       const MAX_MEDIA_PER_RUN = 1;
       const offset = Number(body.offset) || 0;
       const allMedia = await listRecentMedia(30);
       const media = allMedia.slice(offset, offset + MAX_MEDIA_PER_RUN);
-      const messages = (await kvGetJSON('settings:messages')) || {};
-      const correctText = messages.commentReplyText || DEFAULT_REPLY_TEXT;
       const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
       async function deleteWithRetry(id) {
@@ -292,44 +292,18 @@ export default async function adminHandler(req, res, path) {
       for (const m of media) {
         if (rateLimitedStop) break;
         const comments = await listMediaComments(m.id);
+        const ownReplies = comments.filter((c) => c.from?.id === process.env.IG_USER_ID && c.parentId);
 
-        // Group our own replies by the parent comment they were replying to,
-        // so we only ever end up with exactly one (correct) reply per parent —
-        // never one new reply per deleted bad reply.
-        const ownRepliesByParent = new Map();
-        for (const c of comments) {
-          if (c.from?.id === process.env.IG_USER_ID && c.parentId) {
-            if (!ownRepliesByParent.has(c.parentId)) ownRepliesByParent.set(c.parentId, []);
-            ownRepliesByParent.get(c.parentId).push(c);
-          }
-        }
-
-        for (const [parentId, replies] of ownRepliesByParent) {
+        for (const c of ownReplies) {
           if (rateLimitedStop) break;
-          const badOnes = replies.filter((c) => c.text === badText);
-          const correctOnes = replies.filter((c) => c.text === correctText);
-          const extraCorrectOnes = correctOnes.slice(1); // keep the first, delete the rest
-          const toDelete = [...badOnes, ...extraCorrectOnes];
-          if (toDelete.length === 0) continue;
-
-          let deletedAny = false;
-          for (const c of toDelete) {
-            scanned++;
-            const result = await deleteWithRetry(c.id);
-            if (result.ok) {
-              deletedAny = true;
-              await sleep(800);
-            } else if (result.rateLimited) {
-              rateLimitedStop = true;
-              break;
-            }
-          }
-
-          if (correctOnes.length === 0 && deletedAny) {
-            await sendPublicCommentReply(parentId, correctText);
+          scanned++;
+          const result = await deleteWithRetry(c.id);
+          if (result.ok) {
+            fixedCount++;
             await sleep(800);
+          } else if (result.rateLimited) {
+            rateLimitedStop = true;
           }
-          if (deletedAny) fixedCount++;
         }
       }
       const nextOffset = rateLimitedStop ? offset : offset + media.length;
@@ -423,14 +397,9 @@ export default async function adminHandler(req, res, path) {
 
   if (path[0] === 'backfill') {
     const body = `
-      <h2>Eski kommentlarga javob berish</h2>
-      <p style="color:#999;font-size:14px">Oxirgi 30 kunlik postlar/reels'dagi hali javob berilmagan kommentlarni topib, avtomatik javob beradi (ochiq javob + audio).</p>
-      <button id="btnComments">Kommentlarni tekshirish</button>
-      <div id="resComments" style="margin-top:16px;"></div>
-
-      <h2 style="margin-top:40px;">Noto'g'ri yuborilgan javoblarni tuzatish</h2>
-      <p style="color:#999;font-size:14px">"Test xabar" matni bilan ketgan noto'g'ri kommentlarni o'chirib, to'g'ri matn bilan qayta yozadi.</p>
-      <button id="btnFix">Noto'g'ri javoblarni tuzatish</button>
+      <h2>Eski javoblarni o'chirish</h2>
+      <p style="color:#999;font-size:14px">Botning eski postlarga yozgan BARCHA javoblarini (to'g'ri va noto'g'rilarini ham) o'chirib tashlaydi. Eski kommentlarga qayta yozilmaydi — faqat yangi kelgan kommentlarga birgina javob beriladi.</p>
+      <button id="btnFix">Eski javoblarni o'chirish</button>
       <div id="resFix" style="margin-top:16px;"></div>
 
       <h2 style="margin-top:40px;">Javobsiz DM'larni topish</h2>
@@ -440,28 +409,6 @@ export default async function adminHandler(req, res, path) {
       <div id="resDms" style="margin-top:16px;"></div>
 
       <script>
-        document.getElementById('btnComments').onclick = async () => {
-          const btn = document.getElementById('btnComments');
-          const resEl = document.getElementById('resComments');
-          btn.disabled = true;
-          let offset = 0, totalMedia = 0, totalComments = 0, repliedCount = 0, mediaDone = 0;
-          try {
-            while (true) {
-              btn.textContent = 'Tekshirilmoqda... (' + mediaDone + (totalMedia ? '/' + totalMedia : '') + ' post)';
-              const r = await postJSON('/api/admin/backfillcomments', { offset });
-              if (!r.ok) {
-                resEl.innerHTML = '<p style="color:#ff6b6b">Xatolik: ' + (r.error || 'nomalum') + '</p>';
-                break;
-              }
-              totalMedia = r.totalMedia; totalComments += r.totalComments; repliedCount += r.repliedCount; mediaDone += r.mediaChecked;
-              resEl.innerHTML = '<p>' + mediaDone + '/' + totalMedia + ' ta post tekshirildi, ' + totalComments + ' ta komment topildi, ' + repliedCount + ' tasiga yangi javob yuborildi.</p>';
-              if (!r.hasMore) break;
-              offset = r.nextOffset;
-            }
-          } finally {
-            btn.disabled = false; btn.textContent = 'Kommentlarni tekshirish';
-          }
-        };
         document.getElementById('btnFix').onclick = async () => {
           const btn = document.getElementById('btnFix');
           const resEl = document.getElementById('resFix');
@@ -469,19 +416,19 @@ export default async function adminHandler(req, res, path) {
           let offset = 0, totalMedia = 0, scanned = 0, fixedCount = 0, mediaDone = 0;
           try {
             while (true) {
-              btn.textContent = 'Tuzatilmoqda... (' + mediaDone + (totalMedia ? '/' + totalMedia : '') + ' post)';
-              const r = await postJSON('/api/admin/fixwrongreplies', { offset, wrongText: 'Test xabar' });
+              btn.textContent = 'O\\'chirilmoqda... (' + mediaDone + (totalMedia ? '/' + totalMedia : '') + ' post)';
+              const r = await postJSON('/api/admin/fixwrongreplies', { offset });
               if (!r.ok) {
                 resEl.innerHTML = '<p style="color:#ff6b6b">Xatolik: ' + (r.error || 'nomalum') + '</p>';
                 break;
               }
               totalMedia = r.totalMedia; scanned += r.scanned; fixedCount += r.fixedCount; mediaDone += r.mediaChecked;
-              resEl.innerHTML = '<p>' + mediaDone + '/' + totalMedia + ' ta post tekshirildi, ' + scanned + ' ta noto\\'g\\'ri javob topildi, ' + fixedCount + ' tasi tuzatildi.</p>';
+              resEl.innerHTML = '<p>' + mediaDone + '/' + totalMedia + ' ta post tekshirildi, ' + scanned + ' ta eski javob topildi, ' + fixedCount + ' tasi o\\'chirildi.</p>';
               if (!r.hasMore) break;
               offset = r.nextOffset;
             }
           } finally {
-            btn.disabled = false; btn.textContent = 'Noto\\'g\\'ri javoblarni tuzatish';
+            btn.disabled = false; btn.textContent = 'Eski javoblarni o\\'chirish';
           }
         };
         document.getElementById('btnDms').onclick = async () => {
