@@ -53,3 +53,22 @@ export async function getConversationMessages(conversationId, limit = 3) {
   }
   return data.data || [];
 }
+
+export async function listCommentReplies(commentId) {
+  const url = `https://graph.instagram.com/v21.0/${commentId}/replies?fields=id,text,from&limit=50&access_token=${encodeURIComponent(token())}`;
+  const r = await fetch(url);
+  const data = await r.json();
+  if (!r.ok) {
+    console.error('listCommentReplies error', JSON.stringify(data));
+    return [];
+  }
+  return data.data || [];
+}
+
+export async function deleteComment(commentId) {
+  const url = `https://graph.instagram.com/v21.0/${commentId}?access_token=${encodeURIComponent(token())}`;
+  const r = await fetch(url, { method: 'DELETE' });
+  const data = await r.json();
+  if (!r.ok) console.error('deleteComment error', JSON.stringify(data));
+  return r.ok;
+}
