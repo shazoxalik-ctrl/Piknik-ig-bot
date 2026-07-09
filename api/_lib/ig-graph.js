@@ -18,7 +18,7 @@ export async function listRecentMedia(sinceDays = 30, limit = 50) {
 }
 
 export async function listMediaComments(mediaId) {
-  const url = `https://graph.instagram.com/v21.0/${mediaId}/comments?fields=id,text,timestamp,username,from&limit=100&access_token=${encodeURIComponent(token())}`;
+  const url = `https://graph.instagram.com/v21.0/${mediaId}/comments?fields=id,text,timestamp,username,from,parent_id&limit=100&access_token=${encodeURIComponent(token())}`;
   const r = await fetch(url);
   const data = await r.json();
   if (!r.ok) {
@@ -28,6 +28,7 @@ export async function listMediaComments(mediaId) {
   return (data.data || []).map((c) => ({
     id: c.id,
     text: c.text,
+    parentId: c.parent_id || null,
     from: c.from || { id: c.from_id || c.id, username: c.username },
   }));
 }
@@ -49,17 +50,6 @@ export async function getConversationMessages(conversationId, limit = 3) {
   const data = await r.json();
   if (!r.ok) {
     console.error('getConversationMessages error', JSON.stringify(data));
-    return [];
-  }
-  return data.data || [];
-}
-
-export async function listCommentReplies(commentId) {
-  const url = `https://graph.instagram.com/v21.0/${commentId}/replies?fields=id,text,from&limit=50&access_token=${encodeURIComponent(token())}`;
-  const r = await fetch(url);
-  const data = await r.json();
-  if (!r.ok) {
-    console.error('listCommentReplies error', JSON.stringify(data));
     return [];
   }
   return data.data || [];
