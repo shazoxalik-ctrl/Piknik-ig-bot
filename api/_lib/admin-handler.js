@@ -272,6 +272,8 @@ export default async function adminHandler(req, res, path) {
     try {
       const body = await readJsonBody(req);
       const MAX_MEDIA_PER_RUN = 1;
+      const TIME_BUDGET_MS = 20000; // bail out well before Vercel's own function timeout
+      const startedAt = Date.now();
       const offset = Number(body.offset) || 0;
       const allMedia = await listRecentMedia(30);
       const media = allMedia.slice(offset, offset + MAX_MEDIA_PER_RUN);
@@ -289,13 +291,18 @@ export default async function adminHandler(req, res, path) {
       let scanned = 0;
       let fixedCount = 0;
       let rateLimitedStop = false;
+      let timeBudgetStop = false;
       for (const m of media) {
-        if (rateLimitedStop) break;
+        if (rateLimitedStop || timeBudgetStop) break;
         const comments = await listMediaComments(m.id);
         const ownReplies = comments.filter((c) => c.from?.id === process.env.IG_USER_ID && c.parentId);
 
         for (const c of ownReplies) {
           if (rateLimitedStop) break;
+          if (Date.now() - startedAt > TIME_BUDGET_MS) {
+            timeBudgetStop = true;
+            break;
+          }
           scanned++;
           const result = await deleteWithRetry(c.id);
           if (result.ok) {
@@ -306,8 +313,9 @@ export default async function adminHandler(req, res, path) {
           }
         }
       }
-      const nextOffset = rateLimitedStop ? offset : offset + media.length;
-      const hasMore = rateLimitedStop ? true : nextOffset < allMedia.length;
+      const stayOnSameMedia = rateLimitedStop || timeBudgetStop;
+      const nextOffset = stayOnSameMedia ? offset : offset + media.length;
+      const hasMore = stayOnSameMedia ? true : nextOffset < allMedia.length;
       return res.status(200).json({
         ok: true,
         mediaChecked: media.length,
