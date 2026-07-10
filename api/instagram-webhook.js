@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { kvGetJSON, kvHSet, kvHIncrBy, kvSAdd } from './_lib/kv.js';
+import { kvGetJSON, kvSetJSONPersistent, kvHSet, kvHIncrBy, kvSAdd } from './_lib/kv.js';
 import { handleNewComment, handleFirstDirectContact, todayKey } from './_lib/ig-actions.js';
 
 export const config = { api: { bodyParser: false } };
@@ -35,13 +35,30 @@ function extractPhone(text) {
   return digits.length >= 7 && digits.length <= 13 ? digits : null;
 }
 
+// Marks that a contacted user actually wrote back to us via Direct at least
+// once. Counted once per user, regardless of how many messages they send.
+async function markDmReplied(senderId) {
+  const repliedBackKey = `dmreplied:${senderId}`;
+  const already = await kvGetJSON(repliedBackKey);
+  if (already) return;
+  await kvSetJSONPersistent(repliedBackKey, true);
+  const day = todayKey();
+  await kvSAdd('stats:days', day);
+  await kvHIncrBy(`stats:day:${day}`, 'dmReplied');
+}
+
 async function handleMessagingEvent(event) {
   const senderId = event.sender?.id;
   const message = event.message;
   if (!senderId || !message || message.is_echo) return;
 
+  const alreadyContacted = await kvGetJSON(`ig:${senderId}`);
   const contactResult = await handleFirstDirectContact(senderId);
   console.log('handleFirstDirectContact result:', JSON.stringify(contactResult));
+
+  // If we'd already contacted this user before, this incoming message is a
+  // genuine reply to our earlier DM.
+  if (alreadyContacted) await markDmReplied(senderId);
 
   const phone = extractPhone(message.text);
   if (!phone) return;
