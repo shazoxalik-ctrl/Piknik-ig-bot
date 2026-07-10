@@ -56,7 +56,7 @@ export function isQualifyingComment(text) {
   if (!text) return false;
   const trimmed = text.trim();
   if (!trimmed) return false;
-  if (trimmed.includes('+')) return true;
+  if (trimmed.includes('+') || trimmed.includes('➕') || trimmed.includes('✚')) return true;
   const lower = trimmed.toLowerCase();
   return INTEREST_KEYWORDS.some((k) => lower.includes(k));
 }
