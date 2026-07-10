@@ -18,19 +18,29 @@ export async function listRecentMedia(sinceDays = 30, limit = 50) {
 }
 
 export async function listMediaComments(mediaId) {
-  const url = `https://graph.instagram.com/v21.0/${mediaId}/comments?fields=id,text,timestamp,username,from,parent_id&limit=100&access_token=${encodeURIComponent(token())}`;
-  const r = await fetch(url);
-  const data = await r.json();
-  if (!r.ok) {
-    console.error('listMediaComments error', JSON.stringify(data));
-    return [];
+  const results = [];
+  let url = `https://graph.instagram.com/v21.0/${mediaId}/comments?fields=id,text,timestamp,username,from,parent_id&limit=100&access_token=${encodeURIComponent(token())}`;
+  let pages = 0;
+  const MAX_PAGES = 20; // up to 2000 comments per media
+  while (url && pages < MAX_PAGES) {
+    const r = await fetch(url);
+    const data = await r.json();
+    if (!r.ok) {
+      console.error('listMediaComments error', JSON.stringify(data));
+      break;
+    }
+    for (const c of data.data || []) {
+      results.push({
+        id: c.id,
+        text: c.text,
+        parentId: c.parent_id || null,
+        from: c.from || { id: c.from_id || c.id, username: c.username },
+      });
+    }
+    url = data.paging?.next || null;
+    pages++;
   }
-  return (data.data || []).map((c) => ({
-    id: c.id,
-    text: c.text,
-    parentId: c.parent_id || null,
-    from: c.from || { id: c.from_id || c.id, username: c.username },
-  }));
+  return results;
 }
 
 export async function listConversations(limit = 50) {
