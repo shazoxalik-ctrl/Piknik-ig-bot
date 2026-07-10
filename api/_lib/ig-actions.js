@@ -44,10 +44,15 @@ export function todayKey() {
 }
 
 const INTEREST_KEYWORDS = [
-  'narx', 'нарх', 'qancha', 'канча', 'нечи', 'nechi', 'qiymat', 'сколько', 'цена',
-  'sotasiz', 'sotilad', 'bormi', 'bor mi', 'mavjud', 'yetkaz', 'достав',
-  'buyurtma', 'заказ', 'купить', 'sotib ol', 'kerak', 'malumot', 'информация',
-  'qayerda', 'qayerdan', 'откуда',
+  // Uzbek
+  'narx', 'нарх', 'qancha', 'канча', 'нечи', 'nechi', 'qiymat',
+  'sotasiz', 'sotilad', 'bormi', 'bor mi', 'mavjud', 'yetkaz',
+  'buyurtma', 'sotib ol', 'kerak', 'malumot', 'qayerda', 'qayerdan',
+  // Russian
+  'сколько', 'цена', 'достав', 'заказ', 'купить', 'информация', 'откуда', 'стоимост', 'есть ли', 'наличие',
+  // English
+  'price', 'cost', 'how much', 'buy', 'order', 'available', 'availability',
+  'info', 'information', 'where', 'delivery', 'need', 'interested',
 ];
 
 // Only reply to comments that show real purchase intent (asking about price/product,
