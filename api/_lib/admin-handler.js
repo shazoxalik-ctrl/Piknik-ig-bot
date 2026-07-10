@@ -482,23 +482,28 @@ export default async function adminHandler(req, res, path) {
   const sortedDays = days.filter((d) => d >= from && d <= to).sort().reverse();
   const dayStats = await Promise.all(sortedDays.map((day) => kvHGetAll(`stats:day:${day}`)));
 
-  let totalComments = 0, totalReplied = 0, totalLeads = 0;
+  let totalComments = 0, totalReplied = 0, totalLeads = 0, totalDmReplied = 0;
   const dayRows = sortedDays
     .map((day, i) => {
       const s = dayStats[i] || {};
       const comments = Number(s.comments) || 0;
       const repliedCount = Number(s.replied) || 0;
       const leadsCount = Number(s.leads) || 0;
+      const dmRepliedCount = Number(s.dmReplied) || 0;
       totalComments += comments;
       totalReplied += repliedCount;
       totalLeads += leadsCount;
+      totalDmReplied += dmRepliedCount;
       const replyRate = comments > 0 ? ((repliedCount / comments) * 100).toFixed(0) : '0';
+      const dmReplyRate = repliedCount > 0 ? ((dmRepliedCount / repliedCount) * 100).toFixed(0) : '0';
       const convRate = repliedCount > 0 ? ((leadsCount / repliedCount) * 100).toFixed(0) : '0';
       return `<tr>
         <td>${day}</td>
         <td>${comments}</td>
         <td>${repliedCount}</td>
         <td>${replyRate}%</td>
+        <td>${dmRepliedCount}</td>
+        <td>${dmReplyRate}%</td>
         <td>${leadsCount}</td>
         <td>${convRate}%</td>
       </tr>`;
@@ -506,6 +511,7 @@ export default async function adminHandler(req, res, path) {
     .join('');
 
   const overallReplyRate = totalComments > 0 ? ((totalReplied / totalComments) * 100).toFixed(0) : '0';
+  const overallDmReplyRate = totalReplied > 0 ? ((totalDmReplied / totalReplied) * 100).toFixed(0) : '0';
   const overallConvRate = totalReplied > 0 ? ((totalLeads / totalReplied) * 100).toFixed(0) : '0';
 
   const repliedRows = Object.entries(replied)
@@ -545,12 +551,14 @@ export default async function adminHandler(req, res, path) {
     <div class="cards">
       <div class="card"><div class="num">${totalComments}</div><div class="label">Jami kommentlar</div></div>
       <div class="card"><div class="num">${totalReplied}</div><div class="label">Javob berilgan (${overallReplyRate}%)</div></div>
+      <div class="card"><div class="num">${totalDmReplied}</div><div class="label">Direktga javob berdi (${overallDmReplyRate}%)</div></div>
       <div class="card"><div class="num">${totalLeads}</div><div class="label">Raqam qoldirgan (${overallConvRate}%)</div></div>
     </div>
     <h2>Kunlik statistika</h2>
+    <p style="color:#999;font-size:14px">"Direktga javob berdi" — ovozli xabar yuborilgandan keyin o'sha kishi Direct orqali javob yozganlar (raqam qoldirganlar ham shu songa kiradi).</p>
     <table>
-      <tr><th>Sana</th><th>Kommentlar</th><th>Javob berildi</th><th>Javob %</th><th>Raqam qoldirdi</th><th>Konversiya %</th></tr>
-      ${dayRows || '<tr><td colspan="6">Hali yo\'q</td></tr>'}
+      <tr><th>Sana</th><th>Kommentlar</th><th>Javob berildi</th><th>Javob %</th><th>Direktga javob berdi</th><th>Direkt javob %</th><th>Raqam qoldirdi</th><th>Konversiya %</th></tr>
+      ${dayRows || '<tr><td colspan="8">Hali yo\'q</td></tr>'}
     </table>
     <h2>Raqam qoldirganlar (batafsil)</h2>
     <table><tr><th>Foydalanuvchi</th><th>Raqam</th><th>Vaqt</th></tr>${leadRows || '<tr><td colspan="3">Hali yo\'q</td></tr>'}</table>
