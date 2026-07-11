@@ -29,23 +29,30 @@ async function amoFetch(path, options = {}) {
   return r.json();
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Wazzup takes a few seconds to create the amoCRM contact after a comment
+// comes in, so we may beat it there. Retry a few times before giving up.
 async function findCommunityLeadsForUsername(username) {
   if (!username) return [];
-  const data = await amoFetch(`/api/v4/contacts?query=${encodeURIComponent(username)}&with=leads`);
-  const contacts = data?._embedded?.contacts || [];
-  const contact = contacts.find((c) => c.name === username) || contacts[0];
-  if (!contact) {
-    console.log('amoCRM: no contact found for', username);
-    return [];
-  }
-  const leadRefs = contact._embedded?.leads || [];
 
-  const leads = [];
-  for (const ref of leadRefs) {
-    const lead = await amoFetch(`/api/v4/leads/${ref.id}`);
-    if (lead && lead.pipeline_id === COMMUNITY_PIPELINE_ID) leads.push(lead);
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    const data = await amoFetch(`/api/v4/contacts?query=${encodeURIComponent(username)}&with=leads`);
+    const contacts = data?._embedded?.contacts || [];
+    const contact = contacts.find((c) => c.name === username) || contacts[0];
+    if (contact) {
+      const leadRefs = contact._embedded?.leads || [];
+      const leads = [];
+      for (const ref of leadRefs) {
+        const lead = await amoFetch(`/api/v4/leads/${ref.id}`);
+        if (lead && lead.pipeline_id === COMMUNITY_PIPELINE_ID) leads.push(lead);
+      }
+      return leads;
+    }
+    if (attempt < 4) await sleep(4000);
   }
-  return leads;
+  console.log('amoCRM: no contact found for', username, 'after retries');
+  return [];
 }
 
 async function moveLeadToStatus(leadId, statusId) {
