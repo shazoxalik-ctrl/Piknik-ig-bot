@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { kvGetJSON, kvSetJSONPersistent, kvHSet, kvHIncrBy, kvSAdd } from './_lib/kv.js';
 import { handleNewComment, handleFirstDirectContact, todayKey } from './_lib/ig-actions.js';
+import { markCrmNumberReceived } from './_lib/amocrm.js';
 
 export const config = { api: { bodyParser: false } };
 
@@ -74,6 +75,7 @@ async function handleMessagingEvent(event) {
   await kvSAdd('stats:days', day);
   await kvHIncrBy(`stats:day:${day}`, 'leads');
   console.log('Phone captured:', senderId, phone);
+  if (state?.username) await markCrmNumberReceived(state.username);
 }
 
 export default async function handler(req, res) {
