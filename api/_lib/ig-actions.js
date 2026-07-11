@@ -1,4 +1,5 @@
 import { kvGetJSON, kvSetJSON, kvSetJSONPersistent, kvHSet, kvHIncrBy, kvSAdd } from './kv.js';
+import { markCrmReplied } from './amocrm.js';
 
 const GRAPH_URL = `https://graph.instagram.com/v21.0/${process.env.IG_USER_ID}/messages`;
 
@@ -91,6 +92,7 @@ export async function handleNewComment(value) {
   const messages = (await kvGetJSON('settings:messages')) || {};
   const replyText = messages.commentReplyText || "Assalomu alaykum. Sizga direct'dan javob yubordim! 😊";
   await sendPublicCommentReply(value.id, replyText);
+  await markCrmReplied(username);
 
   const stateKey = `ig:${value.from.id}`;
   const existing = await kvGetJSON(stateKey);
