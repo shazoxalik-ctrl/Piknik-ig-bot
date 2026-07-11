@@ -1,4 +1,4 @@
-const AMO_BASE = () => `https://${process.env.AMO_SUBDOMAIN}.amocrm.ru`;
+const AMO_BASE = () => `https://${process.env.AMO_SUBDOMAIN}.amocrm.ru`; // redeploy to pick up AMO_* env vars
 
 const COMMUNITY_PIPELINE_ID = 10696658;
 const STATUS_UNSORTED = 84285170;
