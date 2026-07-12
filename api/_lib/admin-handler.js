@@ -332,6 +332,53 @@ export default async function adminHandler(req, res, path) {
     }
   }
 
+  if (req.method === 'POST' && path[0] === 'backfilloldcomments') {
+    // Runs old (last N days) comments through the exact same handleNewComment
+    // path live traffic uses — same qualifying-comment filter, same
+    // per-comment idempotency guard, same one-time audio DM, same CRM sync.
+    try {
+      const body = await readJsonBody(req);
+      const days = Number(body.days) || 14;
+      const MAX_MEDIA_PER_RUN = 1;
+      const TIME_BUDGET_MS = 20000;
+      const startedAt = Date.now();
+      const offset = Number(body.offset) || 0;
+      const allMedia = await listRecentMedia(days);
+      const media = allMedia.slice(offset, offset + MAX_MEDIA_PER_RUN);
+
+      let scanned = 0;
+      let repliedCount = 0;
+      let timeBudgetStop = false;
+      for (const m of media) {
+        if (timeBudgetStop) break;
+        const comments = await listMediaComments(m.id);
+        for (const c of comments) {
+          if (Date.now() - startedAt > TIME_BUDGET_MS) {
+            timeBudgetStop = true;
+            break;
+          }
+          scanned++;
+          const result = await handleNewComment({ id: c.id, text: c.text, from: c.from });
+          if (result.replied || result.repliedPublicOnly) repliedCount++;
+        }
+      }
+      const nextOffset = timeBudgetStop ? offset : offset + media.length;
+      const hasMore = timeBudgetStop ? true : nextOffset < allMedia.length;
+      return res.status(200).json({
+        ok: true,
+        mediaChecked: media.length,
+        scanned,
+        repliedCount,
+        hasMore,
+        nextOffset,
+        totalMedia: allMedia.length,
+      });
+    } catch (e) {
+      console.error('backfilloldcomments error', e);
+      return res.status(500).json({ error: String(e) });
+    }
+  }
+
   res.setHeader('Content-Type', 'text/html');
 
   if (path[0] === 'users') {
@@ -405,7 +452,12 @@ export default async function adminHandler(req, res, path) {
 
   if (path[0] === 'backfill') {
     const body = `
-      <h2>Eski javoblarni o'chirish</h2>
+      <h2>Eski javobsiz komentlarga javob berish</h2>
+      <p style="color:#999;font-size:14px">Oxirgi 14 kunlik postlardagi hali javob berilmagan narx/"+" komentlariga ochiq javob va (birinchi marta bo'lsa) ovozli xabar yuboradi. Har bir komentga faqat bir marta javob beriladi.</p>
+      <button id="btnBackfillComments">Eski komentlarga javob berish</button>
+      <div id="resBackfillComments" style="margin-top:16px;"></div>
+
+      <h2 style="margin-top:40px;">Eski javoblarni o'chirish</h2>
       <p style="color:#999;font-size:14px">Botning eski postlarga yozgan BARCHA javoblarini (to'g'ri va noto'g'rilarini ham) o'chirib tashlaydi. Eski kommentlarga qayta yozilmaydi — faqat yangi kelgan kommentlarga birgina javob beriladi.</p>
       <button id="btnFix">Eski javoblarni o'chirish</button>
       <div id="resFix" style="margin-top:16px;"></div>
@@ -417,6 +469,28 @@ export default async function adminHandler(req, res, path) {
       <div id="resDms" style="margin-top:16px;"></div>
 
       <script>
+        document.getElementById('btnBackfillComments').onclick = async () => {
+          const btn = document.getElementById('btnBackfillComments');
+          const resEl = document.getElementById('resBackfillComments');
+          btn.disabled = true;
+          let offset = 0, totalMedia = 0, scanned = 0, repliedCount = 0, mediaDone = 0;
+          try {
+            while (true) {
+              btn.textContent = 'Tekshirilmoqda... (' + mediaDone + (totalMedia ? '/' + totalMedia : '') + ' post)';
+              const r = await postJSON('/api/admin/backfilloldcomments', { offset, days: 14 });
+              if (!r.ok) {
+                resEl.innerHTML = '<p style="color:#ff6b6b">Xatolik: ' + (r.error || 'nomalum') + '</p>';
+                break;
+              }
+              totalMedia = r.totalMedia; scanned += r.scanned; repliedCount += r.repliedCount; mediaDone += r.mediaChecked;
+              resEl.innerHTML = '<p>' + mediaDone + '/' + totalMedia + ' ta post tekshirildi, ' + scanned + ' ta komment ko\\'rildi, ' + repliedCount + ' tasiga javob berildi.</p>';
+              if (!r.hasMore) break;
+              offset = r.nextOffset;
+            }
+          } finally {
+            btn.disabled = false; btn.textContent = 'Eski komentlarga javob berish';
+          }
+        };
         document.getElementById('btnFix').onclick = async () => {
           const btn = document.getElementById('btnFix');
           const resEl = document.getElementById('resFix');
