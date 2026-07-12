@@ -265,6 +265,20 @@ export default async function adminHandler(req, res, path) {
     }
   }
 
+  if (req.method === 'POST' && path[0] === 'listmediadates') {
+    try {
+      const body = await readJsonBody(req);
+      const days = Number(body.days) || 14;
+      const allMedia = await listRecentMedia(days);
+      return res.status(200).json({
+        ok: true,
+        media: allMedia.map((m, i) => ({ offset: i, id: m.id, timestamp: m.timestamp, caption: (m.caption || '').slice(0, 40) })),
+      });
+    } catch (e) {
+      return res.status(500).json({ error: String(e) });
+    }
+  }
+
   if (req.method === 'POST' && path[0] === 'fixwrongreplies') {
     // Deletes every reply the bot itself has ever posted (correct or wrong text alike).
     // We no longer try to detect/repair old replies — going forward only brand new
