@@ -67,7 +67,7 @@ export function isQualifyingComment(text) {
   return INTEREST_KEYWORDS.some((k) => lower.includes(k));
 }
 
-export async function handleNewComment(value) {
+export async function handleNewComment(value, options = {}) {
   if (!value?.id || !value?.from?.id) return { skipped: 'missing id' };
   if (value.from.id === process.env.IG_USER_ID) return { skipped: 'own account' };
 
@@ -77,7 +77,7 @@ export async function handleNewComment(value) {
 
   const username = value.from.username || null;
 
-  if (!isQualifyingComment(value.text)) {
+  if (!options.skipQualifyFilter && !isQualifyingComment(value.text)) {
     return { skipped: 'not a qualifying comment', username };
   }
 
@@ -112,7 +112,7 @@ export async function handleNewComment(value) {
 
 // Called when someone messages us directly (e.g. via Message Requests) without
 // ever having commented first. Sends the same welcome audio, once per user.
-export async function handleFirstDirectContact(senderId) {
+export async function handleFirstDirectContact(senderId, username = null) {
   const stateKey = `ig:${senderId}`;
   const existing = await kvGetJSON(stateKey);
   if (existing) return { skipped: 'already contacted' };
@@ -120,12 +120,13 @@ export async function handleFirstDirectContact(senderId) {
   const day = todayKey();
   await kvSAdd('stats:days', day);
   const repliedAt = Date.now();
-  await kvSetJSON(stateKey, { repliedAt, username: null });
-  await kvHSet('stats:replied', senderId, { username: null, commentText: '(Direct orqali)', repliedAt });
+  await kvSetJSON(stateKey, { repliedAt, username });
+  await kvHSet('stats:replied', senderId, { username, commentText: '(Direct orqali)', repliedAt });
   await kvHIncrBy(`stats:day:${day}`, 'replied');
 
   const audioUrl = process.env.WELCOME_AUDIO_URL;
   if (audioUrl) await sendDirectAudio(senderId, audioUrl);
+  if (username) await markCrmReplied(username);
 
   return { replied: true };
 }
