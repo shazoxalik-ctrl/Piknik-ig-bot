@@ -244,21 +244,53 @@ export default async function adminHandler(req, res, path) {
   }
 
   if (req.method === 'POST' && path[0] === 'backfilldmsreply') {
+    // Pages through ALL Instagram conversations (not just the most recent 50),
+    // sending the one-time welcome audio to anyone we haven't contacted yet.
     try {
-      const conversations = await listConversations(50);
+      const reqBody = await readJsonBody(req);
+      const TIME_BUDGET_MS = 20000;
+      const startedAt = Date.now();
+      let cursor = reqBody.cursor || null;
       let checked = 0;
       let sentCount = 0;
-      for (const conv of conversations) {
-        const msgs = await getConversationMessages(conv.id, 3);
-        if (!msgs.length) continue;
-        const last = msgs[0];
-        if (last.from?.id && last.from.id !== process.env.IG_USER_ID) {
-          checked++;
-          const result = await handleFirstDirectContact(last.from.id, last.from.username || null);
-          if (result.replied) sentCount++;
+      let hasMore = false;
+      let nextCursor = null;
+
+      while (true) {
+        if (Date.now() - startedAt > TIME_BUDGET_MS) {
+          hasMore = true;
+          nextCursor = cursor;
+          break;
         }
+        const { conversations, nextCursor: fetchedCursor } = await listConversations(50, cursor);
+        if (conversations.length === 0) {
+          hasMore = false;
+          break;
+        }
+        for (const conv of conversations) {
+          if (Date.now() - startedAt > TIME_BUDGET_MS) {
+            hasMore = true;
+            nextCursor = cursor;
+            break;
+          }
+          const msgs = await getConversationMessages(conv.id, 3);
+          if (!msgs.length) continue;
+          const last = msgs[0];
+          if (last.from?.id && last.from.id !== process.env.IG_USER_ID) {
+            checked++;
+            const result = await handleFirstDirectContact(last.from.id, last.from.username || null);
+            if (result.replied) sentCount++;
+          }
+        }
+        if (hasMore) break;
+        if (!fetchedCursor) {
+          hasMore = false;
+          break;
+        }
+        cursor = fetchedCursor;
       }
-      return res.status(200).json({ ok: true, checked, sentCount });
+
+      return res.status(200).json({ ok: true, checked, sentCount, hasMore, nextCursor });
     } catch (e) {
       console.error('backfill dms reply error', e);
       return res.status(500).json({ error: String(e) });
@@ -552,11 +584,21 @@ export default async function adminHandler(req, res, path) {
         };
         document.getElementById('btnDmsReply').onclick = async () => {
           const btn = document.getElementById('btnDmsReply');
-          btn.disabled = true; btn.textContent = 'Yuborilmoqda...';
-          const r = await postJSON('/api/admin/backfilldmsreply', {});
-          btn.disabled = false; btn.textContent = 'Ularga ovozli xabar yuborish';
-          if (!r.ok) { alert('Xatolik: ' + (r.error || 'nomalum')); return; }
-          alert(r.checked + ' ta suhbat qayta tekshirildi, ' + r.sentCount + ' kishiga yangi ovozli xabar yuborildi.');
+          btn.disabled = true;
+          let cursor = null, totalChecked = 0, totalSent = 0;
+          try {
+            while (true) {
+              btn.textContent = 'Yuborilmoqda... (' + totalChecked + ' tekshirildi, ' + totalSent + ' yuborildi)';
+              const r = await postJSON('/api/admin/backfilldmsreply', { cursor });
+              if (!r.ok) { alert('Xatolik: ' + (r.error || 'nomalum')); break; }
+              totalChecked += r.checked; totalSent += r.sentCount;
+              if (!r.hasMore) break;
+              cursor = r.nextCursor;
+            }
+          } finally {
+            btn.disabled = false; btn.textContent = 'Ularga ovozli xabar yuborish';
+          }
+          alert(totalChecked + ' ta suhbat tekshirildi, ' + totalSent + ' kishiga yangi ovozli xabar yuborildi.');
           document.getElementById('btnDms').click();
         };
       </script>`;
