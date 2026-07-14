@@ -43,15 +43,17 @@ export async function listMediaComments(mediaId) {
   return results;
 }
 
-export async function listConversations(limit = 50) {
-  const url = `https://graph.instagram.com/v21.0/${IG_USER_ID}/conversations?platform=instagram&limit=${limit}&access_token=${encodeURIComponent(token())}`;
+export async function listConversations(limit = 50, after = null) {
+  const url = after
+    ? `https://graph.instagram.com/v21.0/${IG_USER_ID}/conversations?platform=instagram&limit=${limit}&after=${encodeURIComponent(after)}&access_token=${encodeURIComponent(token())}`
+    : `https://graph.instagram.com/v21.0/${IG_USER_ID}/conversations?platform=instagram&limit=${limit}&access_token=${encodeURIComponent(token())}`;
   const r = await fetch(url);
   const data = await r.json();
   if (!r.ok) {
     console.error('listConversations error', JSON.stringify(data));
-    return [];
+    return { conversations: [], nextCursor: null };
   }
-  return data.data || [];
+  return { conversations: data.data || [], nextCursor: data.paging?.cursors?.after || null };
 }
 
 export async function getConversationMessages(conversationId, limit = 3) {
