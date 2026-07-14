@@ -254,7 +254,7 @@ export default async function adminHandler(req, res, path) {
         const last = msgs[0];
         if (last.from?.id && last.from.id !== process.env.IG_USER_ID) {
           checked++;
-          const result = await handleFirstDirectContact(last.from.id);
+          const result = await handleFirstDirectContact(last.from.id, last.from.username || null);
           if (result.replied) sentCount++;
         }
       }
@@ -353,6 +353,7 @@ export default async function adminHandler(req, res, path) {
     try {
       const body = await readJsonBody(req);
       const days = Number(body.days) || 14;
+      const includeAll = !!body.includeAll; // one-time backlog catch-up: reply to every comment, not just qualifying ones
       const MAX_MEDIA_PER_RUN = 1;
       const TIME_BUDGET_MS = 20000;
       const startedAt = Date.now();
@@ -372,7 +373,7 @@ export default async function adminHandler(req, res, path) {
             break;
           }
           scanned++;
-          const result = await handleNewComment({ id: c.id, text: c.text, from: c.from });
+          const result = await handleNewComment({ id: c.id, text: c.text, from: c.from }, { skipQualifyFilter: includeAll });
           if (result.replied || result.repliedPublicOnly) repliedCount++;
         }
       }
@@ -467,7 +468,11 @@ export default async function adminHandler(req, res, path) {
   if (path[0] === 'backfill') {
     const body = `
       <h2>Eski javobsiz komentlarga javob berish</h2>
-      <p style="color:#999;font-size:14px">Oxirgi 14 kunlik postlardagi hali javob berilmagan narx/"+" komentlariga ochiq javob va (birinchi marta bo'lsa) ovozli xabar yuboradi. Har bir komentga faqat bir marta javob beriladi.</p>
+      <p style="color:#999;font-size:14px">Oxirgi 14 kunlik postlardagi hali javob berilmagan komentlarga ochiq javob va (birinchi marta bo'lsa) ovozli xabar yuboradi. Har bir komentga va har bir odamga faqat bir marta javob beriladi.</p>
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:14px;color:#ccc;">
+        <input type="checkbox" id="includeAllChk" style="width:auto;margin:0;">
+        Hammasiga javob ber (reaksiya/aloqasi yo'q komentlar ham) — belgilanmasa faqat narx/"+" ga javob beriladi
+      </label>
       <button id="btnBackfillComments">Eski komentlarga javob berish</button>
       <div id="resBackfillComments" style="margin-top:16px;"></div>
 
@@ -491,7 +496,8 @@ export default async function adminHandler(req, res, path) {
           try {
             while (true) {
               btn.textContent = 'Tekshirilmoqda... (' + mediaDone + (totalMedia ? '/' + totalMedia : '') + ' post)';
-              const r = await postJSON('/api/admin/backfilloldcomments', { offset, days: 14 });
+              const includeAll = document.getElementById('includeAllChk').checked;
+              const r = await postJSON('/api/admin/backfilloldcomments', { offset, days: 14, includeAll });
               if (!r.ok) {
                 resEl.innerHTML = '<p style="color:#ff6b6b">Xatolik: ' + (r.error || 'nomalum') + '</p>';
                 break;
