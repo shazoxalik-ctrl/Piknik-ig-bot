@@ -114,11 +114,16 @@ async function getLeadsForUsernameAnyPipeline(username) {
   return leads;
 }
 
-// Returns 'sotib_oldi' | 'jarayonda' | 'yopilgan' | null (no CRM lead found at all).
+// Returns { outcome: 'sotib_oldi' | 'jarayonda' | 'yopilgan', price } or null
+// (no CRM lead found at all). price is the summed value of any won lead(s).
 export async function getLeadOutcomeForUsername(username) {
   const leads = await getLeadsForUsernameAnyPipeline(username);
   if (leads.length === 0) return null;
-  if (leads.some((l) => l.status_id === STATUS_WON)) return 'sotib_oldi';
-  if (leads.some((l) => l.status_id !== STATUS_LOST)) return 'jarayonda';
-  return 'yopilgan';
+  const wonLeads = leads.filter((l) => l.status_id === STATUS_WON);
+  if (wonLeads.length > 0) {
+    const price = wonLeads.reduce((sum, l) => sum + (Number(l.price) || 0), 0);
+    return { outcome: 'sotib_oldi', price };
+  }
+  if (leads.some((l) => l.status_id !== STATUS_LOST)) return { outcome: 'jarayonda', price: 0 };
+  return { outcome: 'yopilgan', price: 0 };
 }
