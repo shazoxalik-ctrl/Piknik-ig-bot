@@ -83,7 +83,7 @@ function layout(title, body, active) {
   header { display: flex; justify-content: space-between; align-items: center; padding: 16px 32px; border-bottom: 1px solid #262626; flex-wrap: wrap; gap: 8px; }
   nav a { color: #999; text-decoration: none; margin-right: 20px; font-size: 14px; }
   nav a.active, nav a:hover { color: #fff; }
-  main { padding: 32px; max-width: 1000px; }
+  main { padding: 32px; max-width: 1400px; }
   .filters { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
   .filters a { color: #999; text-decoration: none; font-size: 13px; padding: 6px 12px; border-radius: 6px; background: #1c1c1c; }
   .filters a.active, .filters a:hover { color: #fff; background: #2a2a2a; }
@@ -321,6 +321,13 @@ export default async function adminHandler(req, res, path) {
       console.error('backfill dms reply error', e);
       return res.status(500).json({ error: String(e) });
     }
+  }
+
+  if (req.method === 'POST' && path[0] === 'resetleadoutcomes') {
+    // One-off: clears the cache so everyone gets rechecked with the current
+    // (price-aware) outcome logic instead of stale pre-price entries.
+    await kvSetJSONPersistent('crm:leadoutcomes', {});
+    return res.status(200).json({ ok: true });
   }
 
   if (req.method === 'POST' && path[0] === 'checkleadoutcomes') {
