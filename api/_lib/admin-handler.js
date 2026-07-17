@@ -40,7 +40,7 @@ async function checkLeadOutcomesBatch({ offset = 0, batchSize = 3, timeBudgetMs 
     if (Date.now() - startedAt > timeBudgetMs) break;
     processed++;
     const outcome = v?.username ? await getLeadOutcomeForUsername(v.username) : null;
-    outcomes[id] = outcome || 'topilmadi';
+    outcomes[id] = outcome || { outcome: 'topilmadi', price: 0 };
   }
   if (processed > 0) await kvSetJSONPersistent('crm:leadoutcomes', outcomes);
 
@@ -703,16 +703,27 @@ export default async function adminHandler(req, res, path) {
     )
     .join('');
   const OUTCOME_LABELS = { sotib_oldi: 'Sotib oldi ✅', jarayonda: 'Jarayonda', yopilgan: 'Yopilgan', topilmadi: "CRM'da topilmadi" };
+  // Old cache entries were plain strings; normalize everything to {outcome, price}.
+  function normalizeOutcome(raw) {
+    if (!raw) return null;
+    if (typeof raw === 'string') return { outcome: raw, price: 0 };
+    return raw;
+  }
   const leadEntries = Object.entries(leads);
-  const wonCount = leadEntries.filter(([id]) => leadOutcomes[id] === 'sotib_oldi').length;
-  const checkedCount = leadEntries.filter(([id]) => leadOutcomes[id]).length;
+  const normalizedOutcomes = {};
+  for (const [id] of leadEntries) normalizedOutcomes[id] = normalizeOutcome(leadOutcomes[id]);
+  const wonCount = leadEntries.filter(([id]) => normalizedOutcomes[id]?.outcome === 'sotib_oldi').length;
+  const checkedCount = leadEntries.filter(([id]) => normalizedOutcomes[id]).length;
   const wonRate = checkedCount > 0 ? ((wonCount / checkedCount) * 100).toFixed(0) : '0';
+  const totalSalesAmount = leadEntries.reduce((sum, [id]) => sum + (normalizedOutcomes[id]?.price || 0), 0);
   const leadRows = leadEntries
     .sort((a, b) => (b[1].capturedAt || 0) - (a[1].capturedAt || 0))
-    .map(
-      ([id, v]) =>
-        `<tr><td>${v.username || id}</td><td>${v.phone}</td><td>${new Date(v.capturedAt).toLocaleString('uz-UZ')}</td><td>${OUTCOME_LABELS[leadOutcomes[id]] || 'Tekshirilmagan'}</td></tr>`
-    )
+    .map(([id, v]) => {
+      const o = normalizedOutcomes[id];
+      const label = o ? (OUTCOME_LABELS[o.outcome] || o.outcome) : 'Tekshirilmagan';
+      const priceStr = o?.price ? ' (' + o.price.toLocaleString('uz-UZ') + " so'm)" : '';
+      return `<tr><td>${v.username || id}</td><td>${v.phone}</td><td>${new Date(v.capturedAt).toLocaleString('uz-UZ')}</td><td>${label}${priceStr}</td></tr>`;
+    })
     .join('');
 
   function isoDaysAgo(n) {
@@ -740,6 +751,7 @@ export default async function adminHandler(req, res, path) {
       <div class="card"><div class="num">${totalDmReplied}</div><div class="label">Direktga javob berdi (${overallDmReplyRate}%)</div></div>
       <div class="card"><div class="num">${totalLeads}</div><div class="label">Raqam qoldirgan (${overallConvRate}%)</div></div>
       <div class="card"><div class="num">${wonCount}</div><div class="label">Sotib oldi (${wonRate}% tekshirilganlardan)</div></div>
+      <div class="card"><div class="num">${totalSalesAmount.toLocaleString('uz-UZ')}</div><div class="label">Jami savdo summasi (so'm)</div></div>
     </div>
     <h2>Kunlik statistika</h2>
     <p style="color:#999;font-size:14px">"Direktga javob berdi" — ovozli xabar yuborilgandan keyin o'sha kishi Direct orqali javob yozganlar (raqam qoldirganlar ham shu songa kiradi).</p>
