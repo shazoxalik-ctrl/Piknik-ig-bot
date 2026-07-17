@@ -24,6 +24,31 @@ async function readJsonBody(req) {
   }
 }
 
+// Checks amoCRM outcome for people who left a phone number and haven't been
+// checked yet, caching results in crm:leadoutcomes so the dashboard's
+// "Sotib oldi" percentage stays fresh without needing a manual button.
+async function checkLeadOutcomesBatch({ offset = 0, batchSize = 3, timeBudgetMs = 8000 } = {}) {
+  const startedAt = Date.now();
+  const leads = await kvHGetAll('stats:leads');
+  const entries = Object.entries(leads);
+  const outcomes = (await kvGetJSON('crm:leadoutcomes')) || {};
+  const unchecked = entries.filter(([id]) => !outcomes[id]);
+  const batch = unchecked.slice(offset, offset + batchSize);
+
+  let processed = 0;
+  for (const [id, v] of batch) {
+    if (Date.now() - startedAt > timeBudgetMs) break;
+    processed++;
+    const outcome = v?.username ? await getLeadOutcomeForUsername(v.username) : null;
+    outcomes[id] = outcome || 'topilmadi';
+  }
+  if (processed > 0) await kvSetJSONPersistent('crm:leadoutcomes', outcomes);
+
+  const nextOffset = offset + processed;
+  const hasMore = nextOffset < unchecked.length;
+  return { checked: processed, total: unchecked.length, nextOffset, hasMore };
+}
+
 async function checkLogin(username, password) {
   if (!username || !password) return false;
   const admins = await kvHGetAll('admin:users');
@@ -305,27 +330,8 @@ export default async function adminHandler(req, res, path) {
     try {
       const reqBody = await readJsonBody(req);
       const offset = Number(reqBody.offset) || 0;
-      const BATCH = 5;
-      const TIME_BUDGET_MS = 20000;
-      const startedAt = Date.now();
-
-      const leads = await kvHGetAll('stats:leads');
-      const entries = Object.entries(leads);
-      const batch = entries.slice(offset, offset + BATCH);
-      const outcomes = (await kvGetJSON('crm:leadoutcomes')) || {};
-
-      let processed = 0;
-      for (const [id, v] of batch) {
-        if (Date.now() - startedAt > TIME_BUDGET_MS) break;
-        processed++;
-        const outcome = v?.username ? await getLeadOutcomeForUsername(v.username) : null;
-        outcomes[id] = outcome || 'topilmadi';
-      }
-      await kvSetJSONPersistent('crm:leadoutcomes', outcomes);
-
-      const nextOffset = offset + processed;
-      const hasMore = nextOffset < entries.length;
-      return res.status(200).json({ ok: true, checked: processed, total: entries.length, nextOffset, hasMore });
+      const result = await checkLeadOutcomesBatch({ offset, batchSize: 5, timeBudgetMs: 20000 });
+      return res.status(200).json({ ok: true, ...result });
     } catch (e) {
       console.error('checkleadoutcomes error', e);
       return res.status(500).json({ error: String(e) });
@@ -645,6 +651,9 @@ export default async function adminHandler(req, res, path) {
     kvHGetAll('stats:leads'),
     kvSMembers('stats:days'),
   ]);
+  // Quietly check a handful of not-yet-checked leads on every dashboard load
+  // (small batch so it doesn't noticeably slow the page down).
+  await checkLeadOutcomesBatch({ batchSize: 3, timeBudgetMs: 6000 }).catch(() => {});
   const leadOutcomes = (await kvGetJSON('crm:leadoutcomes')) || {};
 
   const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' });
@@ -739,9 +748,7 @@ export default async function adminHandler(req, res, path) {
       ${dayRows || '<tr><td colspan="8">Hali yo\'q</td></tr>'}
     </table>
     <h2>Raqam qoldirganlar (batafsil)</h2>
-    <p style="color:#999;font-size:14px">"CRM holati" — AmoCRM'dagi joriy bosqichi (istalgan pipeline bo'yicha). Yangilash uchun tugmani bosing (tekshirish bir necha daqiqa olishi mumkin).</p>
-    <button id="btnCheckOutcomes">CRM holatini tekshirish</button>
-    <div id="resCheckOutcomes" style="margin:8px 0 16px;font-size:14px;color:#999;"></div>
+    <p style="color:#999;font-size:14px">"CRM holati" — AmoCRM'dagi joriy bosqichi (istalgan pipeline bo'yicha). Har safar sahifa ochilganda avtomatik ozgina yangilanib boradi.</p>
     <table><tr><th>Foydalanuvchi</th><th>Raqam</th><th>Vaqt</th><th>CRM holati</th></tr>${leadRows || '<tr><td colspan="4">Hali yo\'q</td></tr>'}</table>
     <h2>Javob berilganlar (batafsil)</h2>
     <table><tr><th>Foydalanuvchi</th><th>Komment</th><th>Vaqt</th></tr>${repliedRows || '<tr><td colspan="3">Hali yo\'q</td></tr>'}</table>
@@ -751,29 +758,6 @@ export default async function adminHandler(req, res, path) {
         const f = document.getElementById('fromInput').value || '0000-00-00';
         const t = document.getElementById('toInput').value;
         location.href = '/api/admin?from=' + f + '&to=' + t;
-      };
-      document.getElementById('btnCheckOutcomes').onclick = async () => {
-        const btn = document.getElementById('btnCheckOutcomes');
-        const resEl = document.getElementById('resCheckOutcomes');
-        btn.disabled = true;
-        let offset = 0, total = 0, checked = 0;
-        try {
-          while (true) {
-            btn.textContent = 'Tekshirilmoqda... (' + checked + (total ? '/' + total : '') + ')';
-            const r = await postJSON('/api/admin/checkleadoutcomes', { offset });
-            if (!r.ok) {
-              resEl.innerHTML = '<p style="color:#ff6b6b">Xatolik: ' + (r.error || 'nomalum') + '</p>';
-              break;
-            }
-            total = r.total; checked += r.checked;
-            resEl.textContent = checked + '/' + total + ' tekshirildi...';
-            if (!r.hasMore) break;
-            offset = r.nextOffset;
-          }
-        } finally {
-          btn.disabled = false; btn.textContent = 'CRM holatini tekshirish';
-        }
-        location.reload();
       };
     </script>`;
   return res.status(200).send(layout('Statistika', body, ''));
