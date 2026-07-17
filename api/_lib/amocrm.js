@@ -92,3 +92,33 @@ export async function markCrmNumberReceived(username) {
     console.error('markCrmNumberReceived error', e);
   }
 }
+
+// amoCRM reuses status_id 142/143 as universal "won"/"lost" markers across every
+// pipeline (only the display label differs per pipeline). So checking these two
+// IDs tells us a lead's outcome regardless of which pipeline it's currently in.
+const STATUS_WON = 142;
+const STATUS_LOST = 143;
+
+async function getLeadsForUsernameAnyPipeline(username) {
+  if (!username) return [];
+  const data = await amoFetch(`/api/v4/contacts?query=${encodeURIComponent(username)}&with=leads`);
+  const contacts = data?._embedded?.contacts || [];
+  const contact = contacts.find((c) => c.name === username) || contacts[0];
+  if (!contact) return [];
+  const leadRefs = contact._embedded?.leads || [];
+  const leads = [];
+  for (const ref of leadRefs) {
+    const lead = await amoFetch(`/api/v4/leads/${ref.id}`);
+    if (lead) leads.push(lead);
+  }
+  return leads;
+}
+
+// Returns 'sotib_oldi' | 'jarayonda' | 'yopilgan' | null (no CRM lead found at all).
+export async function getLeadOutcomeForUsername(username) {
+  const leads = await getLeadsForUsernameAnyPipeline(username);
+  if (leads.length === 0) return null;
+  if (leads.some((l) => l.status_id === STATUS_WON)) return 'sotib_oldi';
+  if (leads.some((l) => l.status_id !== STATUS_LOST)) return 'jarayonda';
+  return 'yopilgan';
+}
