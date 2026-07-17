@@ -90,8 +90,8 @@ function layout(title, body, active) {
   .filters form { display: flex; align-items: center; gap: 8px; max-width: none; margin: 0; }
   .filters input { width: auto; margin: 0; padding: 6px 10px; }
   .filters button { padding: 6px 14px; font-size: 13px; }
-  .cards { display: flex; gap: 16px; margin-bottom: 32px; flex-wrap: wrap; }
-  .card { background: #1c1c1c; border-radius: 12px; padding: 20px 28px; }
+  .cards { display: flex; gap: 12px; margin-bottom: 32px; flex-wrap: nowrap; overflow-x: auto; }
+  .card { background: #1c1c1c; border-radius: 12px; padding: 16px 18px; flex: 1 1 0; min-width: 130px; white-space: nowrap; }
   .card .num { font-size: 32px; font-weight: 700; }
   .card .label { font-size: 13px; color: #999; margin-top: 4px; }
   table { width: 100%; border-collapse: collapse; margin-bottom: 32px; }
