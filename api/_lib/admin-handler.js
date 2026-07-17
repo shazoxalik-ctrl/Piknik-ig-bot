@@ -1,6 +1,7 @@
 import { kvHGetAll, kvHSet, kvHDel, kvGetJSON, kvSetJSONPersistent, kvSetRaw, kvSMembers } from './kv.js';
 import { hashPassword, verifyPassword, signSession, verifySession, parseCookies } from './auth.js';
 import { handleNewComment, handleFirstDirectContact } from './ig-actions.js';
+import { getLeadOutcomeForUsername } from './amocrm.js';
 import {
   listRecentMedia,
   listMediaComments,
@@ -293,6 +294,40 @@ export default async function adminHandler(req, res, path) {
       return res.status(200).json({ ok: true, checked, sentCount, hasMore, nextCursor });
     } catch (e) {
       console.error('backfill dms reply error', e);
+      return res.status(500).json({ error: String(e) });
+    }
+  }
+
+  if (req.method === 'POST' && path[0] === 'checkleadoutcomes') {
+    // For everyone who left a phone number, checks their current amoCRM lead
+    // outcome (won/in-progress/lost) across all pipelines and caches it, so the
+    // dashboard can show what share of leads actually convert to a sale.
+    try {
+      const reqBody = await readJsonBody(req);
+      const offset = Number(reqBody.offset) || 0;
+      const BATCH = 5;
+      const TIME_BUDGET_MS = 20000;
+      const startedAt = Date.now();
+
+      const leads = await kvHGetAll('stats:leads');
+      const entries = Object.entries(leads);
+      const batch = entries.slice(offset, offset + BATCH);
+      const outcomes = (await kvGetJSON('crm:leadoutcomes')) || {};
+
+      let processed = 0;
+      for (const [id, v] of batch) {
+        if (Date.now() - startedAt > TIME_BUDGET_MS) break;
+        processed++;
+        const outcome = v?.username ? await getLeadOutcomeForUsername(v.username) : null;
+        outcomes[id] = outcome || 'topilmadi';
+      }
+      await kvSetJSONPersistent('crm:leadoutcomes', outcomes);
+
+      const nextOffset = offset + processed;
+      const hasMore = nextOffset < entries.length;
+      return res.status(200).json({ ok: true, checked: processed, total: entries.length, nextOffset, hasMore });
+    } catch (e) {
+      console.error('checkleadoutcomes error', e);
       return res.status(500).json({ error: String(e) });
     }
   }
@@ -610,6 +645,7 @@ export default async function adminHandler(req, res, path) {
     kvHGetAll('stats:leads'),
     kvSMembers('stats:days'),
   ]);
+  const leadOutcomes = (await kvGetJSON('crm:leadoutcomes')) || {};
 
   const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' });
   const from = req.query.from || '0000-00-00';
@@ -657,11 +693,16 @@ export default async function adminHandler(req, res, path) {
         `<tr><td>${v.username || id}</td><td>${(v.commentText || '').slice(0, 60)}</td><td>${new Date(v.repliedAt).toLocaleString('uz-UZ')}</td></tr>`
     )
     .join('');
-  const leadRows = Object.entries(leads)
+  const OUTCOME_LABELS = { sotib_oldi: 'Sotib oldi ✅', jarayonda: 'Jarayonda', yopilgan: 'Yopilgan', topilmadi: "CRM'da topilmadi" };
+  const leadEntries = Object.entries(leads);
+  const wonCount = leadEntries.filter(([id]) => leadOutcomes[id] === 'sotib_oldi').length;
+  const checkedCount = leadEntries.filter(([id]) => leadOutcomes[id]).length;
+  const wonRate = checkedCount > 0 ? ((wonCount / checkedCount) * 100).toFixed(0) : '0';
+  const leadRows = leadEntries
     .sort((a, b) => (b[1].capturedAt || 0) - (a[1].capturedAt || 0))
     .map(
       ([id, v]) =>
-        `<tr><td>${v.username || id}</td><td>${v.phone}</td><td>${new Date(v.capturedAt).toLocaleString('uz-UZ')}</td></tr>`
+        `<tr><td>${v.username || id}</td><td>${v.phone}</td><td>${new Date(v.capturedAt).toLocaleString('uz-UZ')}</td><td>${OUTCOME_LABELS[leadOutcomes[id]] || 'Tekshirilmagan'}</td></tr>`
     )
     .join('');
 
@@ -689,6 +730,7 @@ export default async function adminHandler(req, res, path) {
       <div class="card"><div class="num">${totalReplied}</div><div class="label">Javob berilgan (${overallReplyRate}%)</div></div>
       <div class="card"><div class="num">${totalDmReplied}</div><div class="label">Direktga javob berdi (${overallDmReplyRate}%)</div></div>
       <div class="card"><div class="num">${totalLeads}</div><div class="label">Raqam qoldirgan (${overallConvRate}%)</div></div>
+      <div class="card"><div class="num">${wonCount}</div><div class="label">Sotib oldi (${wonRate}% tekshirilganlardan)</div></div>
     </div>
     <h2>Kunlik statistika</h2>
     <p style="color:#999;font-size:14px">"Direktga javob berdi" — ovozli xabar yuborilgandan keyin o'sha kishi Direct orqali javob yozganlar (raqam qoldirganlar ham shu songa kiradi).</p>
@@ -697,7 +739,10 @@ export default async function adminHandler(req, res, path) {
       ${dayRows || '<tr><td colspan="8">Hali yo\'q</td></tr>'}
     </table>
     <h2>Raqam qoldirganlar (batafsil)</h2>
-    <table><tr><th>Foydalanuvchi</th><th>Raqam</th><th>Vaqt</th></tr>${leadRows || '<tr><td colspan="3">Hali yo\'q</td></tr>'}</table>
+    <p style="color:#999;font-size:14px">"CRM holati" — AmoCRM'dagi joriy bosqichi (istalgan pipeline bo'yicha). Yangilash uchun tugmani bosing (tekshirish bir necha daqiqa olishi mumkin).</p>
+    <button id="btnCheckOutcomes">CRM holatini tekshirish</button>
+    <div id="resCheckOutcomes" style="margin:8px 0 16px;font-size:14px;color:#999;"></div>
+    <table><tr><th>Foydalanuvchi</th><th>Raqam</th><th>Vaqt</th><th>CRM holati</th></tr>${leadRows || '<tr><td colspan="4">Hali yo\'q</td></tr>'}</table>
     <h2>Javob berilganlar (batafsil)</h2>
     <table><tr><th>Foydalanuvchi</th><th>Komment</th><th>Vaqt</th></tr>${repliedRows || '<tr><td colspan="3">Hali yo\'q</td></tr>'}</table>
     <script>
@@ -706,6 +751,29 @@ export default async function adminHandler(req, res, path) {
         const f = document.getElementById('fromInput').value || '0000-00-00';
         const t = document.getElementById('toInput').value;
         location.href = '/api/admin?from=' + f + '&to=' + t;
+      };
+      document.getElementById('btnCheckOutcomes').onclick = async () => {
+        const btn = document.getElementById('btnCheckOutcomes');
+        const resEl = document.getElementById('resCheckOutcomes');
+        btn.disabled = true;
+        let offset = 0, total = 0, checked = 0;
+        try {
+          while (true) {
+            btn.textContent = 'Tekshirilmoqda... (' + checked + (total ? '/' + total : '') + ')';
+            const r = await postJSON('/api/admin/checkleadoutcomes', { offset });
+            if (!r.ok) {
+              resEl.innerHTML = '<p style="color:#ff6b6b">Xatolik: ' + (r.error || 'nomalum') + '</p>';
+              break;
+            }
+            total = r.total; checked += r.checked;
+            resEl.textContent = checked + '/' + total + ' tekshirildi...';
+            if (!r.hasMore) break;
+            offset = r.nextOffset;
+          }
+        } finally {
+          btn.disabled = false; btn.textContent = 'CRM holatini tekshirish';
+        }
+        location.reload();
       };
     </script>`;
   return res.status(200).send(layout('Statistika', body, ''));
