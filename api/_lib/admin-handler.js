@@ -323,13 +323,6 @@ export default async function adminHandler(req, res, path) {
     }
   }
 
-  if (req.method === 'POST' && path[0] === 'resetleadoutcomes') {
-    // One-off: clears the cache so everyone gets rechecked with the corrected
-    // pipeline-scoped "won" logic instead of the old status-142-everywhere bug.
-    await kvSetJSONPersistent('crm:leadoutcomes', {});
-    return res.status(200).json({ ok: true });
-  }
-
   if (req.method === 'POST' && path[0] === 'checkleadoutcomes') {
     // For everyone who left a phone number, checks their current amoCRM lead
     // outcome (won/in-progress/lost) across all pipelines and caches it, so the
