@@ -93,11 +93,13 @@ export async function markCrmNumberReceived(username) {
   }
 }
 
-// amoCRM reuses status_id 142/143 as universal "won"/"lost" markers across every
-// pipeline (only the display label differs per pipeline). So checking these two
-// IDs tells us a lead's outcome regardless of which pipeline it's currently in.
-const STATUS_WON = 142;
+// status_id 143 ("closed and not realized") is a universal "lost" marker across
+// every pipeline. status_id 142 is NOT universal here, though: in Community it's
+// our own custom "Raqam olindi" (phone captured) stage, while only in Call center
+// does 142 genuinely mean "sotildi" (sold). So "won" must be pipeline-scoped.
 const STATUS_LOST = 143;
+const CALL_CENTER_PIPELINE_ID = 10695834;
+const CALL_CENTER_STATUS_SOLD = 142;
 
 async function getLeadsForUsernameAnyPipeline(username) {
   if (!username) return [];
@@ -119,7 +121,7 @@ async function getLeadsForUsernameAnyPipeline(username) {
 export async function getLeadOutcomeForUsername(username) {
   const leads = await getLeadsForUsernameAnyPipeline(username);
   if (leads.length === 0) return null;
-  const wonLeads = leads.filter((l) => l.status_id === STATUS_WON);
+  const wonLeads = leads.filter((l) => l.pipeline_id === CALL_CENTER_PIPELINE_ID && l.status_id === CALL_CENTER_STATUS_SOLD);
   if (wonLeads.length > 0) {
     const price = wonLeads.reduce((sum, l) => sum + (Number(l.price) || 0), 0);
     return { outcome: 'sotib_oldi', price };
