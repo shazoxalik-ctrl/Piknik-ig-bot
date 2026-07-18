@@ -709,7 +709,13 @@ export default async function adminHandler(req, res, path) {
     if (typeof raw === 'string') return { outcome: raw, price: 0 };
     return raw;
   }
-  const leadEntries = Object.entries(leads);
+  function capturedDayKey(ts) {
+    return new Date(ts).toLocaleDateString('en-CA', { timeZone: 'Asia/Tashkent' });
+  }
+  const leadEntries = Object.entries(leads).filter(([, v]) => {
+    const day = capturedDayKey(v.capturedAt || 0);
+    return day >= from && day <= to;
+  });
   const normalizedOutcomes = {};
   for (const [id] of leadEntries) normalizedOutcomes[id] = normalizeOutcome(leadOutcomes[id]);
   const wonCount = leadEntries.filter(([id]) => normalizedOutcomes[id]?.outcome === 'sotib_oldi').length;
